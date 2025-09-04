@@ -1,4 +1,3 @@
-
 import os
 import torch
 import torch.nn as nn
@@ -6,7 +5,7 @@ from typing import Iterable
 
 from collections import OrderedDict
 from models_pretrain import *
-from task_vectors.task_vectors import TaskVector
+from task_vectors import TaskVector
 
 
 def model_validation_single_pretrained(output_dir: str,

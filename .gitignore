@@ -1,1 +1,7 @@
 __pycache__/
+
+pretrained_checkpoints/
+output/
+logs/
+
+run.sh

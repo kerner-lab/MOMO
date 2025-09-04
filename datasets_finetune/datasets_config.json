@@ -1,6 +1,6 @@
 {
     "martian_frost": {
-      "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/Martian_Frost",
+      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-frost_cls",
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [299, 299],
@@ -27,7 +27,7 @@
       "label_dict_reverse": {"0": "Aeolian Curved", "1": "Aeolian Straight", "2": "Cliff", "3": "Crater", "4": "Slope Streaks", "5": "Channel", "6": "Gullies", "7": "Mass Wasting", "8": "Mix Terrain", "9": "Ridge", "10": "Rough Terrain", "11": "Mounds", "12": "Crater Field", "13": "Smooth Terrain", "14": "Textured Terrain"}
     },
     "atmospheric_dust_edr": {
-      "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/hirise_dusty_patches_v1.0.0/edr_nomap_full_resized",
+      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-atmospheric_dust_cls_edr",
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [100, 100],
@@ -36,7 +36,7 @@
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
     "atmospheric_dust_rdr": {
-      "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/hirise_dusty_patches_v1.0.0/rdr_nomap_browse",
+      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-atmospheric_dust_cls_rdr",
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [100, 100],
@@ -44,6 +44,8 @@
       "label_dict": {"dusty": 0, "not_dusty": 1},
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
+
+    // TODO: Update according to NewDatasets
     "conequest": {
       "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/ConeQuest",
       "num_classes": 1,

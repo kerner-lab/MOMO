@@ -1,4 +1,3 @@
-
 import cv2
 import numpy as np
 import os
@@ -38,7 +37,7 @@ class CustomDataset(Dataset):
         return image, label, filename
 
 
-class HiriseLandmarkDataset(BaseDataset):
+class ClassificationDataset(BaseDataset):
 
     def __init__(self, config: Dict[str, Any], train_transform: transforms.Compose, val_transform: transforms.Compose, args):
         super().__init__(config, train_transform, val_transform)
@@ -51,7 +50,7 @@ class HiriseLandmarkDataset(BaseDataset):
         self.train_df, self.val_df, self.test_df = self._prepare_data()
 
     def _prepare_data(self):
-
+        
         data_df = pd.read_csv(os.path.join(self.data_dir, "annotation.csv"))
 
         # Convert label to string for path construction
@@ -86,3 +85,16 @@ class HiriseLandmarkDataset(BaseDataset):
 
     def _create_dataset(self, df: pd.DataFrame, is_training: bool) -> Dataset:
         return CustomDataset(df, self.train_transform if is_training else self.val_transform)
+
+
+class DoMars16Dataset(ClassificationDataset):
+    pass
+
+class HiRISELandmarkDataset(ClassificationDataset):
+    pass
+
+class AtmosphericDustDataset(ClassificationDataset):
+    pass
+
+class MartianFrostDataset(ClassificationDataset):
+    pass
