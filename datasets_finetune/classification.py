@@ -3,6 +3,7 @@ import numpy as np
 import os
 import pandas as pd
 from sklearn.preprocessing import LabelEncoder
+from sklearn.utils.class_weight import compute_class_weight
 from typing import Dict, Any
 
 import torch
@@ -62,10 +63,19 @@ class ClassificationDataset(BaseDataset):
         data_df["label"] = le.transform(data_df["label"])
 
         train_df = data_df[data_df["split"]=="train"]
-        if self.balance:
-            # Balance the train_df based on label column
+        if self.balance == "under_sample":
             min_samples = train_df['label'].value_counts().min()
             train_df = train_df.groupby('label').apply(lambda x: x.sample(n=min_samples, random_state=42)).reset_index(drop=True)
+        elif self.balance == "over_sample":
+            from imblearn.over_sampling import RandomOverSampler
+            ros = RandomOverSampler(random_state=42)
+            # Only use label column for y
+            X_resampled, y_resampled = ros.fit_resample(train_df.drop(columns=['label']), train_df['label'])
+            # Combine the resampled features with the resampled labels
+            train_df = pd.concat([X_resampled, pd.Series(y_resampled, name='label')], axis=1)
+            # Ensure labels are still in the correct range
+            train_df['label'] = train_df['label'].astype(int)
+
         val_df = data_df[data_df["split"]=="val"]
         test_df = data_df[data_df["split"]=="test"]
 
@@ -82,6 +92,16 @@ class ClassificationDataset(BaseDataset):
     def get_test_dataloader(self) -> DataLoader:
         test_dataset = self._create_dataset(self.test_df, is_training=False)
         return DataLoader(test_dataset, batch_size=1, shuffle=False)
+
+    def get_class_weights(self):
+        labels = self.train_df['label'].values
+        classes = np.unique(labels)
+        class_weights = compute_class_weight(
+            class_weight='balanced',
+            classes=classes,
+            y=labels
+        )
+        return class_weights.astype(np.float32)
 
     def _create_dataset(self, df: pd.DataFrame, is_training: bool) -> Dataset:
         return CustomDataset(df, self.train_transform if is_training else self.val_transform)

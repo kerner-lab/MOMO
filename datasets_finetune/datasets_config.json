@@ -44,8 +44,6 @@
       "label_dict": {"dusty": 0, "not_dusty": 1},
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
-
-    // TODO: Update according to NewDatasets
     "conequest": {
       "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/ConeQuest",
       "num_classes": 1,

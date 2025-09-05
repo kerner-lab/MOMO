@@ -25,7 +25,9 @@ def get_args_parser():
     argparser.add_argument("--dataset", type=str, required=True,
                            help="Dataset name",
                            choices=["martian_frost", "hirise_landmark", "domars16", "atmospheric_dust_edr", "atmospheric_dust_rdr", "conequest"])
-    argparser.add_argument("--balance_data", default=False, required=False, action="store_true")
+    argparser.add_argument("--balance_data", type=str, default=None, required=False,
+                           choices=["default", "under_sample", "over_sample", "loss_reweight"],
+                           help="Data balancing strategy: 'default' (no balancing), 'under_sample' (undersample majority class), 'over_sample' (oversample minority class), 'loss_reweight' (use class weights in loss function)")
 
     argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
                             help="Available choices: resnet34, squeezenet1-1, efficientnet-v2-m, vit-b-16, vit-b-32, vit-l-16, vit-l-32")
@@ -139,6 +141,22 @@ def create_transforms(train_model, is_training=True):
                 )
             ])
 
+def calculate_class_weights(labels):
+    """Calculate class weights based on the inverse of class frequencies."""
+    from collections import Counter
+    import numpy as np
+    
+    class_counts = Counter(labels)
+    total = len(labels)
+    num_classes = len(class_counts)
+    
+    # Calculate weights inversely proportional to class frequencies
+    weights = {cls: total / (num_classes * count) for cls, count in class_counts.items()}
+    
+    # Convert to list in the order of class indices (0, 1, 2, ...)
+    class_weights = [weights[cls] for cls in sorted(weights)]
+    return torch.FloatTensor(class_weights).to(device)
+
 def main(args):
 
     ### Set seed
@@ -173,7 +191,7 @@ def main(args):
     if args.dataset not in all_configs:
         raise ValueError(f"Unknown dataset: {args.dataset}")
     config = all_configs[args.dataset]
-    config["balance"] = args.balance_data
+    config["balance"] = args.balance_data if args.balance_data is not None else "default"
 
     ### Create transforms
     train_transform = create_transforms(args.train_model, is_training=True)
@@ -186,6 +204,12 @@ def main(args):
     test_dataloader = dataset.get_test_dataloader()
     print(len(train_dataloader), len(val_dataloader), len(test_dataloader))
 
+    ### Calculate class weights if using loss_reweight
+    if args.balance_data == "loss_reweight":
+        class_weights = torch.tensor(dataset.get_class_weights(), dtype=torch.float).to(device)
+    else:
+        class_weights = None
+
     ### Create model
     model = create_finetune_model(args.train_model, args.which_pretraining, config, args.encoder_checkpoint, device)
     model = model.to(device)
@@ -193,9 +217,16 @@ def main(args):
     ### Create loss function based on the task type
     if "classification" in config["task_type"]:
         if config["num_classes"] == 2:
-            criterion = nn.BCELoss()
+            if args.balance_data == "loss_reweight":
+                # For binary classification with class weights, use BCEWithLogitsLoss
+                criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights[1]/class_weights[0])
+            else:
+                criterion = nn.BCEWithLogitsLoss()
         else:
-            criterion = nn.CrossEntropyLoss()
+            if args.balance_data == "loss_reweight":
+                criterion = nn.CrossEntropyLoss(weight=class_weights)
+            else:
+                criterion = nn.CrossEntropyLoss()
     if "segmentation" in config["task_type"]:
         criterion = CombinedLoss(num_classes=config["num_classes"])
 
