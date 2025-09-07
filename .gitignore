@@ -1,7 +1,11 @@
 __pycache__/
 
-pretrained_checkpoints/
 output/
-logs/
+exp_logs/
+# scripts/
+results/
+final_models/
+scripts/
 
 run.sh
+todo.md

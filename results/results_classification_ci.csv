@@ -1,2 +1,0 @@
-Downstream Task,Training type,Train Model,Pre-training configuration,Accuracy,Precision,Recall,F1-Score
-domars16,finetuning,resnet34,resnet_resnet34,0.4901,0.4008,0.4901,0.417

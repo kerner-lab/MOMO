@@ -6,6 +6,7 @@ from tqdm import tqdm
 from typing import Iterable
 # import wandb
 import json
+from datetime import datetime
 
 import segmentation_models_pytorch as smp
 import torch
@@ -124,7 +125,7 @@ def training_model_classification(model: torch.nn.Module,
 def evaluate_model_classification(model: torch.nn.Module,
                    test_dataloader: Iterable, device: torch.device,
                    output_dir: str, config: dict,
-                   model_name: str, dataset_name: str, checkpoint_name: str, metrics_dir: str):
+                   model_name: str, dataset_name: str, checkpoint_name: str):
 
     if model is not None:
         print(f"Finetuned model is provided and using that for evaluation!")
@@ -168,26 +169,25 @@ def evaluate_model_classification(model: torch.nn.Module,
     precision = precision_score(ground_truth, prediction, average="weighted")
     recall = recall_score(ground_truth, prediction, average="weighted")
     f1 = f1_score(ground_truth, prediction, average="weighted")
-    
-    print("Accuracy:", accuracy)
-    print("Precision:", precision)
-    print("Recall:", recall)
-    print("F1-Score:", f1)
 
     ### Plot classification report
     label_dict = config["label_dict"]
     label_dict_reverse = config["label_dict_reverse"]
     label_dict_reverse = {int(k): v for k, v in label_dict_reverse.items()}
 
-    ground_truth_labels = [*map(label_dict_reverse.get, ground_truth)]
-    prediction_labels = [*map(label_dict_reverse.get, prediction)]
+    ground_truth = [*map(label_dict_reverse.get, ground_truth)]
+    prediction = [*map(label_dict_reverse.get, prediction)]
 
-    print(classification_report(ground_truth_labels, prediction_labels))
+    print("Accuracy:", accuracy)
+    print("Precision:", precision)
+    print("Recall:", recall)
+    print("F1-Score:", f1)
+    print(classification_report(ground_truth, prediction))
     print("-"*60)
 
     ### Plot confusion matrix
     cmtx = pd.DataFrame(
-        confusion_matrix(ground_truth_labels, prediction_labels, labels=list(label_dict.keys())), 
+        confusion_matrix(ground_truth, prediction, labels=list(label_dict.keys())), 
         index=list(label_dict.keys()),
         columns=list(label_dict.keys())
     )
@@ -197,38 +197,6 @@ def evaluate_model_classification(model: torch.nn.Module,
         print("\nConfusion Matrix:")
         print(cmtx)
     print("-"*60)
-
-    # save metrics
-    metrics = {
-        'accuracy': accuracy,
-        'precision': precision,
-        'recall': recall,
-        'f1': f1,
-        'classification_report': classification_report(ground_truth_labels, prediction_labels, output_dict=True, target_names=list(label_dict.keys())),
-        'confusion_matrix': confusion_matrix(ground_truth_labels, prediction_labels).tolist()
-    }
-    
-    # Create metrics directory
-    os.makedirs(metrics_dir, exist_ok=True)
-    
-    # Save metrics as JSON
-    metrics_file = os.path.join(metrics_dir, f'metrics_{model_name}_{dataset_name}_{checkpoint_name}.json')
-    with open(metrics_file, 'w') as f:
-        json.dump(metrics, f, indent=2)
-    
-    # Save classification report as CSV
-    report_df = pd.DataFrame(metrics['classification_report']).transpose()
-    report_file = os.path.join(metrics_dir, f'classification_report_{model_name}_{dataset_name}_{checkpoint_name}.csv')
-    report_df.to_csv(report_file)
-    
-    # Save confusion matrix as CSV
-    cm_df = pd.DataFrame(
-        metrics['confusion_matrix'],
-        index=label_dict.keys(),
-        columns=label_dict.keys()
-    )
-    cm_file = os.path.join(metrics_dir, f'confusion_matrix_{model_name}_{dataset_name}_{checkpoint_name}.csv')
-    cm_df.to_csv(cm_file)
 
     return accuracy, precision, recall, f1
 

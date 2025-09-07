@@ -50,8 +50,6 @@ def get_args_parser():
     
     argparser.add_argument("--patience", type=int, default=5, required=False,
                             help="Number of epochs to wait for improvement before early stopping")
-    argparser.add_argument("--metrics_dir", type=str, default="metrics", required=False,
-                            help="path where to save metrics")
        
 
     return argparser
@@ -295,7 +293,6 @@ def main(args):
                 model_name = args.train_model,
                 dataset_name = args.dataset,
                 checkpoint_name = args.encoder_checkpoint.split("/")[-1],
-                metrics_dir = args.metrics_dir
             )
         else:
             print("Warning: No best model found for final evaluation")
