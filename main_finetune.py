@@ -1,10 +1,11 @@
+
 import argparse
 import json
 import os
 import pandas as pd
 import random
 from tqdm import tqdm
-# import wandb
+import wandb
 
 import segmentation_models_pytorch as smp
 import torch
@@ -15,45 +16,78 @@ from torchvision import transforms
 
 from datasets_finetune.dataset_factory import DatasetFactory
 from engine_finetune import *
-from models_finetune import create_finetune_model
-from utils import *
+from models_finetune import create_finetune_model, create_finetune_model_vit
+
+import utils.lr_decay as lrd
+from utils.misc import NativeScalerWithGradNormCount as NativeScaler
+from utils.seed import seed_everything
 
 
 def get_args_parser():
 
     argparser = argparse.ArgumentParser(description="Fine-tuning script for all types of tasks")
-    argparser.add_argument("--dataset", type=str, required=True,
-                           help="Dataset name",
-                           choices=["martian_frost", "hirise_landmark", "domars16", "atmospheric_dust_edr", "atmospheric_dust_rdr", "conequest"])
-    argparser.add_argument("--balance_data", type=str, default=None, required=False,
-                           choices=["default", "under_sample", "over_sample", "loss_reweight"],
-                           help="Data balancing strategy: 'default' (no balancing), 'under_sample' (undersample majority class), 'over_sample' (oversample minority class), 'loss_reweight' (use class weights in loss function)")
 
-    argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
-                            help="Available choices: resnet34, squeezenet1-1, efficientnet-v2-m, vit-b-16, vit-b-32, vit-l-16, vit-l-32")
-    argparser.add_argument("--batch_size", type=int, default=256)
-    argparser.add_argument("--num_epochs", type=int, default=10)
-    argparser.add_argument("--learning_rate", type=float, default=0.0001)
+    # Dataset and paths
+    argparser.add_argument("--data_dir", type=str, required=True, help="Data directory")
+    argparser.add_argument("--dataset", type=str, required=True, help="Dataset name",
+                           choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr",
+                                    "mb-conequest_seg"])
+    argparser.add_argument("--balance_data", default="default", required=False, type=str,
+                           choices=["loss_reweight", "under_sample", "over_sample"])
+    argparser.add_argument("--few_shot", type=str, default=None, required=False,
+                           help="Few shot dataset name", choices=["1_shot", "2_shot", "5_shot", "10_shot", "15_shot", "20_shot"])
+    argparser.add_argument("--partition", type=str, default=None, required=False,
+                           help="Partition dataset name",
+                           choices=["0.01_partition", "0.02_partition", "0.05_partition", "0.10_partition", "0.20_partition", "0.25_partition", "0.50_partition"])
+
+    # Finetuning parameters
     argparser.add_argument("--which_pretraining", type=str, default=None, required=True,
-                           choices=["imagenet_pretrained", "scratch_training", "finetuning"])
+                           choices=["imagenet_pretrained", "scratch_training", "finetuning", "evaluation"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
-    argparser.add_argument("--output_dir", type=str, default=None, required=True,
-                           help="path where to save")
 
+    # Paths
+    argparser.add_argument("--output_dir", type=str, default=None, required=False,
+                           help="path where to save")
+    argparser.add_argument("--metrics_dir", type=str, default="metrics", required=False,
+                            help="path where to save metrics")
+
+    # Model and hyperparameters
+    argparser.add_argument("--seed", type=int, default=42, required=False)
+    argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
+                            choices=["resnet34", "squeezenet1-1", "efficientnet-v2-m", "vit-b-16", "vit-b-32", "vit-l-16", "vit-l-32"])
+    argparser.add_argument("--batch_size", type=int, default=256)
+    argparser.add_argument("--num_epochs", type=int, default=10)
+    argparser.add_argument("--patience", type=int, default=10, required=False,
+                            help="Number of epochs to wait for improvement before early stopping")
+
+    argparser.add_argument("--drop_path", type=float, default=0.0, required=False)
+    argparser.add_argument("--global_pool", default=True, required=False, action="store_true")
+    argparser.add_argument("--learning_rate", type=float, default=0.0001)
+    argparser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations')
+    argparser.add_argument('--clip_grad', type=float, default=None, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
+    argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
+    argparser.add_argument('--blr', type=float, default=1e-3, metavar='LR', help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
+    argparser.add_argument('--layer_decay', type=float, default=0.75, help='layer-wise lr decay from ELECTRA/BEiT')
+    argparser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0')
+    argparser.add_argument('--warmup_epochs', type=int, default=5, metavar='N', help='epochs to warmup LR')
+    argparser.add_argument('--max_norm', type=float, default=0.0, help='max norm for gradient clipping')
+    argparser.add_argument('--pin_mem', action='store_true', help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
+    argparser.set_defaults(pin_mem=True)
+
+    # Data parameters
+    argparser.add_argument("--use_positive_only_conequest", default=False, required=False, action="store_true",
+                            help="Use negative samples only in ConeQuest")
+
+    # wandb
     argparser.add_argument("--wandb_enabled", default=False, required=False, action="store_true",
                             help="True value of this parameter assumes that you have wandb account")
     argparser.add_argument("--wandb_entity", type=str, default="mpurohi3", required=False,
                             help="Provide Wandb entity where plots will be available")
     argparser.add_argument("--wandb_project", type=str, default="LMM_finetuning", required=False,
                             help="Provide Wandb project name for plots")
-    
-    argparser.add_argument("--patience", type=int, default=5, required=False,
-                            help="Number of epochs to wait for improvement before early stopping")
-       
 
     return argparser
-
 
 
 class CombinedLoss(nn.Module):
@@ -139,49 +173,30 @@ def create_transforms(train_model, is_training=True):
                 )
             ])
 
-def calculate_class_weights(labels):
-    """Calculate class weights based on the inverse of class frequencies."""
-    from collections import Counter
-    import numpy as np
-    
-    class_counts = Counter(labels)
-    total = len(labels)
-    num_classes = len(class_counts)
-    
-    # Calculate weights inversely proportional to class frequencies
-    weights = {cls: total / (num_classes * count) for cls, count in class_counts.items()}
-    
-    # Convert to list in the order of class indices (0, 1, 2, ...)
-    class_weights = [weights[cls] for cls in sorted(weights)]
-    return torch.FloatTensor(class_weights).to(device)
-
 def main(args):
-
-    ### Set seed
-    DEFAULT_SEED = random.randint(0, 2**32 - 1)
-    seed_everything(DEFAULT_SEED)
 
     ### Check device type
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ### Initializing output directory and unique name of current run
-    if (args.which_pretraining == "imagenet_pretrained") or (args.which_pretraining == "scratch_training"):
-        pretrained_model = args.which_pretraining
+    if args.which_pretraining in ["imagenet_pretrained", "scratch_training"]:
+        if (args.which_pretraining == "imagenet_pretrained") and ("vit" in args.train_model) and (args.encoder_checkpoint is None):
+            raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
         pretraining_configuration = "-"
-        name_of_run = "balance_data_" + str(args.balance_data) + "_" + args.which_pretraining
-    else:
+        name_of_run = f"{args.balance_data}_{args.which_pretraining}"
+    elif args.which_pretraining == "finetuning":
         assert args.encoder_checkpoint is not None, "Path of pretrained encoder checkpoint must be provided for finetuning."
         assert os.path.exists(args.encoder_checkpoint), f"Encoder checkpoint path does not exist: {args.encoder_checkpoint}"
-        type_of_model = args.encoder_checkpoint.split("/")[-2]
-        if (type_of_model == "combined_models") or ("customized_models" in type_of_model):
-            pretraining_configuration = args.encoder_checkpoint.split("/")[-1].replace("_"+args.train_model, "")
+        path_parts = args.encoder_checkpoint.split("/")
+        type_of_model = path_parts[-2]
+        if type_of_model == "combined_models" or "customized_models" in type_of_model:
+            pretraining_configuration = path_parts[-1].replace("_"+args.train_model, "")
         else:
-            pretraining_configuration = args.encoder_checkpoint.split("/")[-2] + "_" + args.encoder_checkpoint.split("/")[-1].split(".")[0].split("_")[-1]
-        pretrained_model = pretraining_configuration
-        name_of_run = "balance_data_" + str(args.balance_data) + "_" + pretraining_configuration
-
-    output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, name_of_run)
-    os.makedirs(output_dir, exist_ok=True)
+            checkpoint_name = path_parts[-1].split(".")[0].split("_")[-1]
+            pretraining_configuration = f"{path_parts[-2]}_{checkpoint_name}"
+        name_of_run = f"{args.balance_data}_{pretraining_configuration}"
+    else:
+        pass
 
     ### Load and update config
     with open("datasets_finetune/datasets_config.json", "r") as config_file:
@@ -202,167 +217,128 @@ def main(args):
     test_dataloader = dataset.get_test_dataloader()
     print(len(train_dataloader), len(val_dataloader), len(test_dataloader))
 
-    ### Calculate class weights if using loss_reweight
-    if args.balance_data == "loss_reweight":
-        class_weights = torch.tensor(dataset.get_class_weights(), dtype=torch.float).to(device)
-    else:
-        class_weights = None
-
     ### Create model
-    model = create_finetune_model(args.train_model, args.which_pretraining, config, args.encoder_checkpoint, device)
+    if "vit" in args.train_model:
+        model = create_finetune_model_vit(args.train_model, args.which_pretraining, args.drop_path, args.global_pool, config, args.encoder_checkpoint, device, args)
+    else:
+        model = create_finetune_model(args.train_model, args.which_pretraining, config, args.encoder_checkpoint, device)
     model = model.to(device)
 
-    ### Create loss function based on the task type
-    if "classification" in config["task_type"]:
-        if config["num_classes"] == 2:
+    if args.which_pretraining != "evaluation":
+        output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, name_of_run)
+        os.makedirs(output_dir, exist_ok=True)
+
+        ### Create loss function based on the task type
+        if "classification" in config["task_type"]:
             if args.balance_data == "loss_reweight":
-                # For binary classification with class weights, use BCEWithLogitsLoss
-                criterion = nn.BCEWithLogitsLoss(pos_weight=class_weights[1]/class_weights[0])
-            else:
-                criterion = nn.BCEWithLogitsLoss()
-        else:
-            if args.balance_data == "loss_reweight":
+                class_weights = torch.tensor(dataset.get_class_weights(), dtype=torch.float).to(device)
                 criterion = nn.CrossEntropyLoss(weight=class_weights)
             else:
                 criterion = nn.CrossEntropyLoss()
-    if "segmentation" in config["task_type"]:
-        criterion = CombinedLoss(num_classes=config["num_classes"])
+        if "segmentation" in config["task_type"]:
+            criterion = CombinedLoss(num_classes=config["num_classes"])
+        criterion = criterion.to(device)
 
-    ### Create optimizer
-    optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        ### Create optimizer
+        if "vit" in args.train_model:
+            eff_batch_size = args.batch_size * args.accum_iter
+            if args.learning_rate is None:
+                args.learning_rate = args.blr * eff_batch_size / 256
+            param_groups = lrd.param_groups_lrd(model, args.weight_decay,
+                no_weight_decay_list=model.no_weight_decay(),
+                layer_decay=args.layer_decay
+            )
+            optimizer = torch.optim.AdamW(param_groups, lr=args.learning_rate)
+            loss_scaler = NativeScaler()
+        else:
+            optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
 
-    # if args.wandb_enabled:
-    #   wandb.init(
-    #       entity=args.wandb_entity,
-    #       project=args.wandb_project,
-    #       name=args.dataset + "_" + name_of_run + "_" + args.train_model,
-    #       config={
-    #           "Dataset": args.dataset,
-    #           "Model": args.train_model,
-    #           "Training data samples": len(train_dataloader),
-    #           "Validation data samples": len(val_dataloader),
-    #           "Pre-trained Model": pretrained_model,
-    #           "Epochs": args.num_epochs,
-    #           "Batch size": args.batch_size,
-    #           "Optimizer": optimizer,
-    #           "Loss": criterion,
-    #           "Model path": output_dir
-    #       }
-    #   )
+        if args.wandb_enabled:
+            wandb.init(
+                entity=args.wandb_entity,
+                project=args.wandb_project,
+                name=args.dataset + "_" + name_of_run + "_" + args.train_model,
+                config={
+                    "Dataset": args.dataset,
+                    "Model": args.train_model,
+                    "Training data samples": len(train_dataloader),
+                    "Validation data samples": len(val_dataloader),
+                    "Pre-trained Model": pretraining_configuration,
+                    "Epochs": args.num_epochs,
+                    "Batch size": args.batch_size,
+                    "Optimizer": optimizer,
+                    "Loss": criterion,
+                    "Model path": output_dir
+                }
+            )
 
-    ### Train model
-    for epoch in tqdm(range(args.num_epochs), desc=name_of_run):
-
+        ### Train model
         if "classification" in config["task_type"]:
-            model, stop_early = training_model_classification(model, train_dataloader, val_dataloader,
-                                   optimizer, device,
-                                   epoch, config["num_classes"], output_dir,
-                                   criterion, args)
-            # if (epoch == 0) or ((epoch+1) % 5 == 0):
-            # early stopping - patience -> 10
-            # use best epoch for metrics
-            # accuracy, precision, recall, f1score = evaluate_model_classification(model=model, test_dataloader=test_dataloader,
-            #                                                                         device=device, output_dir=None, config=config)
-            if stop_early:
-                print("Early stopping triggered.")
-                break
+            result_csv_path = os.path.join("results", f"results_classification.csv")
+            if "vit" in args.train_model:
+                model = training_model_classification_vit(
+                    model, train_dataloader, val_dataloader,
+                    optimizer, device,
+                    output_dir, args.patience, name_of_run,
+                    criterion, loss_scaler, args
+                )
+            else:
+                model = training_model_classification(
+                    model, train_dataloader, val_dataloader,
+                    optimizer, device,
+                    output_dir, args.patience,
+                    name_of_run, criterion, args
+                )
+            accuracy, precision, recall, f1score = evaluate_model_classification(
+                model=model, test_dataloader=test_dataloader,
+                device=device, result_csv_path=result_csv_path,
+                balance_data=args.balance_data, config=config,
+                pretraining_configuration=pretraining_configuration,
+                no_of_samples=len(train_dataloader)*args.batch_size, args=args
+            )
 
         if "segmentation" in config["task_type"]:
-            model = training_model_segmentation(model, train_dataloader, val_dataloader,
-                                                optimizer, device,
-                                                epoch, config["num_classes"], output_dir,
-                                                criterion, args)
-
-            if (epoch == 0) or ((epoch+1) % 5 == 0):
-                pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = evaluate_model_segmentation(model=model, test_dataloader=test_dataloader,
-                                                                                                                   device=device, output_dir=None, config=config)
-
-    # Final evaluation on test set using best model
-    if "classification" in config["task_type"]:
-        # Load the best model for final evaluation
-        best_model_path = os.path.join(output_dir, "best_model.pth")
-        if os.path.exists(best_model_path):
-            model.load_state_dict(torch.load(best_model_path, map_location=device))
-            print("\nFinal evaluation on test set using best model...")
-            accuracy, precision, recall, f1score = evaluate_model_classification(
-                model=model, 
-                test_dataloader=test_dataloader,
-                device=device, 
-                output_dir=output_dir, 
-                config=config,
-                model_name = args.train_model,
-                dataset_name = args.dataset,
-                checkpoint_name = args.encoder_checkpoint.split("/")[-1],
+            model = training_model_segmentation(
+                model, train_dataloader, val_dataloader,
+                optimizer, device,
+                config["num_classes"], output_dir, args.patience,
+                name_of_run, criterion, args
             )
-        else:
-            print("Warning: No best model found for final evaluation")
-            accuracy, precision, recall, f1score = 0, 0, 0, 0
+            result_csv_path = os.path.join("results", f"results_segmentation.csv")
+            pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = evaluate_model_segmentation(
+                model=model, test_dataloader=test_dataloader,
+                device=device, output_dir=output_dir,
+                result_csv_path=result_csv_path, config=config,
+                pretraining_configuration=pretraining_configuration, args=args
+            )
 
-    ### Save results in CSV file
-    if "classification" in config["task_type"]:
-        result_csv_path = os.path.join("results", f"results_classification_ci.csv")
-        if os.path.exists(result_csv_path):
-            result_df = pd.read_csv(result_csv_path)
-        else:
-            result_df = pd.DataFrame(columns=[
-                "Downstream Task",
-                "Training type",
-                "Train Model",
-                "Pre-training configuration",
-                "Accuracy",
-                "Precision",
-                "Recall",
-                "F1-Score"
-            ])
-        current_result = [
-            args.dataset,
-            args.which_pretraining,
-            args.train_model,
-            pretraining_configuration,
-            round(accuracy, 4),
-            round(precision, 4),
-            round(recall, 4),
-            round(f1score, 4)
-        ]
-        result_df.loc[len(result_df)] = current_result
-        # Create results directory if it doesn't exist
-        os.makedirs("results", exist_ok=True)
-        result_df.to_csv(result_csv_path, index=False)
+    ### Evaluate model
+    else:
+        if args.encoder_checkpoint is None:
+            raise ValueError("Output directory must be provided for evaluation.")
 
-    if "segmentation" in config["task_type"]:
-        result_csv_path = os.path.join("results", f"results_segmentation.csv")
-        if os.path.exists(result_csv_path):
-            result_df = pd.read_csv(result_csv_path)
-        else:
-            result_df = pd.DataFrame(columns=[
-                "Downstream Task",
-                "Training type",
-                "Train Model",
-                "Pre-training configuration",
-                "Pixel IoU",
-                "Pixel Accuracy",
-                "Pixel Precision",
-                "Pixel Recall",
-                "Pixel Dice"
-            ])
-        current_result = [
-            args.dataset,
-            args.which_pretraining,
-            args.train_model,
-            pretraining_configuration,
-            pixel_iou,
-            pixel_accuracy,
-            pixel_precision,
-            pixel_recall,
-            pixel_dice
-        ]
-        result_df.loc[len(result_df)] = current_result
-        # Create results directory if it doesn't exist
-        os.makedirs("results", exist_ok=True)
-        result_df.to_csv(result_csv_path, index=False)
+        if "classification" in config["task_type"]:
+            result_csv_path = os.path.join("results", f"results_classification_evaluate.csv")
+            accuracy, precision, recall, f1score = evaluate_model_classification(
+                model=model, test_dataloader=test_dataloader,
+                device=device, result_csv_path=result_csv_path,
+                balance_data=args.balance_data, config=config,
+                pretraining_configuration=pretraining_configuration,
+                no_of_samples=len(train_dataloader)*args.batch_size, args=args
+            )
+
+        if "segmentation" in config["task_type"]:
+            result_csv_path = os.path.join("results", f"results_segmentation_evaluate.csv")
+            pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = evaluate_model_segmentation(
+                model=model, output_dir=args.output_dir,
+                test_dataloader=test_dataloader, device=device,
+                result_csv_path=result_csv_path, config=config,
+                pretraining_configuration=pretraining_configuration, args=args
+            )
 
 
 if __name__ == "__main__":
     args = get_args_parser()
     args = args.parse_args()
+    seed_everything(args.seed)
     main(args)

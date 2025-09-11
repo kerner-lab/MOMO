@@ -1,55 +1,44 @@
 {
-    "martian_frost": {
-      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-frost_cls",
+    "mb-frost_cls": {
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [299, 299],
-      "balance": false,
       "label_dict": {"Background": 0, "Frost": 1},
       "label_dict_reverse": {"0": "Background", "1": "Frost"}
     },
-    "hirise_landmark": {
-      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-landmark_cls",
+    "mb-landmark_cls": {
       "num_classes": 8,
       "task_type": "multi-class classification",
       "input_size": [227, 227],
-      "balance": false,
       "label_dict": {"Other": 0, "Crater": 1, "Dark dune": 2, "Slope Streak": 3, "Bright dune": 4, "Impact ejecta": 5, "Swiss cheese": 6, "Spider": 7},
       "label_dict_reverse": {"0": "Other", "1": "Crater", "2": "Dark dune", "3": "Slope Streak", "4": "Bright dune", "5": "Impact ejecta", "6": "Swiss cheese", "7": "Spider"}
     },
-    "domars16": {
-      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-domars16k",
+    "mb-domars16k": {
       "num_classes": 15,
       "task_type": "multi-class classification",
       "input_size": [200, 200],
-      "balance": false,
       "label_dict": {"Aeolian Curved": 0, "Aeolian Straight": 1, "Cliff": 2, "Crater": 3, "Slope Streaks": 4, "Channel": 5, "Gullies": 6, "Mass Wasting": 7, "Mix Terrain": 8, "Ridge": 9, "Rough Terrain": 10, "Mounds": 11, "Crater Field": 12, "Smooth Terrain": 13, "Textured Terrain": 14},
       "label_dict_reverse": {"0": "Aeolian Curved", "1": "Aeolian Straight", "2": "Cliff", "3": "Crater", "4": "Slope Streaks", "5": "Channel", "6": "Gullies", "7": "Mass Wasting", "8": "Mix Terrain", "9": "Ridge", "10": "Rough Terrain", "11": "Mounds", "12": "Crater Field", "13": "Smooth Terrain", "14": "Textured Terrain"}
     },
-    "atmospheric_dust_edr": {
-      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-atmospheric_dust_cls_edr",
+    "mb-atmospheric_dust_cls_edr": {
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [100, 100],
-      "balance": false,
       "label_dict": {"dusty": 0, "not_dusty": 1},
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
-    "atmospheric_dust_rdr": {
-      "data_dir": "/data/hkerner/MarsBench/NewDatasets/mb-atmospheric_dust_cls_rdr",
+    "mb-atmospheric_dust_cls_rdr": {
       "num_classes": 2,
       "task_type": "binary classification",
       "input_size": [100, 100],
-      "balance": false,
       "label_dict": {"dusty": 0, "not_dusty": 1},
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
-    "conequest": {
-      "data_dir": "/projects/mlia-active-data/data_ASU/mpurohit/data/ConeQuest",
+    "mb-conequest_seg": {
       "num_classes": 1,
       "task_type": "binary segmentation",
       "input_size": [512, 512],
-      "balance": false,
-      "label_list": ["Cone"]
+      "label_dict": {"background": 0, "cone": 1},
+      "label_dict_reverse": {"0": "background", "1": "cone"}
     }
 }

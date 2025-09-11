@@ -3,8 +3,13 @@ import numpy as np
 import random
 import torch
 from torch import nn
+import os
+
+from timm.models.layers import trunc_normal_
 
 from models_pretrain import *
+from models.models_vit import vit_customized
+from utils.pos_embed import interpolate_pos_embed
 
 
 class Classification(nn.Module):
@@ -31,15 +36,8 @@ class Classification(nn.Module):
             encoder_output = self.encoder(dummy_input)
             num_features = encoder_output.shape[1]
 
-        # Determine the number of output neurons based on the task
-        self.num_classes = config["num_classes"]
-        out_features = 1 if self.num_classes == 2 else self.num_classes
-
         # Add a fully connected layer for classification
-        self.fc = nn.Linear(num_features, out_features)
-
-        # Add the appropriate activation function
-        self.activation = nn.Sigmoid() if self.num_classes == 2 else nn.Softmax(dim=1)
+        self.fc = nn.Linear(num_features, config["num_classes"])
 
     def forward(self, x):
         features = self.encoder(x)
@@ -47,7 +45,7 @@ class Classification(nn.Module):
             # Global average pooling
             features = torch.mean(features, dim=[2, 3])
         logits = self.fc(features)
-        return self.activation(logits)
+        return logits
 
 
 class Segmentation(nn.Module):
@@ -97,10 +95,10 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
         if which_pretraining == "scratch_training":
             model = Classification(train_model=train_model, if_pretrained=False, config=config, device=device)
 
-        if which_pretraining == "imagenet_pretrained":
+        elif which_pretraining == "imagenet_pretrained":
             model = Classification(train_model=train_model, if_pretrained=True, config=config, device=device)
 
-        if which_pretraining == "finetuning":
+        else:
             model = Classification(train_model=train_model, if_pretrained=False, config=config, device=device)
             # Load pre-trained weights if provided
             state_dict = torch.load(pretrained_path)
@@ -115,10 +113,10 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
         if which_pretraining == "scratch_training":
             model = Segmentation(train_model=train_model, if_pretrained=False, config=config, device=device)
 
-        if which_pretraining == "imagenet_pretrained":
+        elif which_pretraining == "imagenet_pretrained":
             model = Segmentation(train_model=train_model, if_pretrained=True, config=config, device=device)
 
-        if which_pretraining == "finetuning":
+        else:
             model = Segmentation(train_model=train_model, if_pretrained=False, config=config, device=device)
             # Load pre-trained weights if provided
             state_dict = torch.load(pretrained_path)
@@ -128,3 +126,71 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
 
         return model
 
+
+def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_pool, config, pretrained_path, device, args):
+
+    if train_model == "vit-b-16":
+        model = vit_customized(
+            img_size=224, patch_size=16, in_chans=3,
+            embed_dim=768, depth=12, num_heads=12,
+            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
+        )
+    elif train_model == "vit-b-32":
+        model = vit_customized(
+            img_size=224, patch_size=32, in_chans=3,
+            embed_dim=768, depth=12, num_heads=12,
+            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
+        )
+    elif train_model == "vit-l-16":
+        model = vit_customized(
+            img_size=224, patch_size=16, in_chans=3,
+            embed_dim=1024, depth=24, num_heads=16,
+            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
+        )
+    elif train_model == "vit-l-32":
+        model = vit_customized(
+            img_size=224, patch_size=32, in_chans=3,
+            embed_dim=1024, depth=24, num_heads=16,
+            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
+        )
+    else:
+        raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
+        return
+
+    if which_pretraining == "scratch_training":
+        model = model.to(device)
+        return model
+
+    else:
+        if which_pretraining == "imagenet_pretrained":
+            if "vit-b" in train_model:
+                checkpoint = torch.load((os.path.join(pretrained_path, "mae_pretrain_vit_base.pth")), map_location='cpu')
+            else:
+                checkpoint = torch.load(os.path.join(pretrained_path, "mae_pretrain_vit_large.pth"), map_location='cpu')
+        else:
+            checkpoint = torch.load(pretrained_path, map_location='cpu')
+
+        print("Load pre-trained checkpoint from: %s" % pretrained_path)
+        checkpoint_model = checkpoint['model']
+        state_dict = model.state_dict()
+        for k in ['head.weight', 'head.bias']:
+            if k in checkpoint_model and checkpoint_model[k].shape != state_dict[k].shape:
+                print(f"Removing key {k} from pretrained checkpoint")
+                del checkpoint_model[k]
+
+        # interpolate position embedding
+        interpolate_pos_embed(model, checkpoint_model)
+
+        # load pre-trained model
+        msg = model.load_state_dict(checkpoint_model, strict=False)
+
+        if not args.if_evaluation:
+            if global_pool:
+                assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
+            else:
+                assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
+
+        # manually initialize fc layer
+        trunc_normal_(model.head.weight, std=2e-5)
+        model = model.to(device)
+        return model

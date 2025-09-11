@@ -1,11 +1,13 @@
 
 import torch
+import torch.nn as nn
 from typing import Dict, Type
 
 from models.resnet import ResNetEncoder, ResNetDecoder, ResNetAutoencoder
 from models.squeezenet import SqueezeNetEncoder, SqueezeNetDecoder, SqueezeNetAutoencoder
 from models.efficientnet import EfficientNetEncoder, EfficientNetDecoder, EfficientNetAutoencoder
-from models.vit import ViTB16Encoder, ViTB32Encoder, ViTL16Encoder, ViTL32Encoder, ViTDecoder, ViTAutoencoder
+# from models.vit import ViTB16Encoder, ViTB32Encoder, ViTL16Encoder, ViTL32Encoder, ViTDecoder, ViTAutoencoder
+from models.mae import mae_vit_customized
 
 
 MODEL_REGISTRY: Dict[str, Dict[str, Type]] = {
@@ -23,34 +25,16 @@ MODEL_REGISTRY: Dict[str, Dict[str, Type]] = {
         "encoder": EfficientNetEncoder,
         "decoder": EfficientNetDecoder,
         "autoencoder": EfficientNetAutoencoder
-    },
-    "vit-b-16": {
-        "encoder": ViTB16Encoder,
-        "decoder": ViTDecoder,
-        "autoencoder": ViTAutoencoder
-    },
-    "vit-b-32": {
-        "encoder": ViTB32Encoder,
-        "decoder": ViTDecoder,
-        "autoencoder": ViTAutoencoder
-    },
-    "vit-l-16": {
-        "encoder": ViTL16Encoder,
-        "decoder": ViTDecoder,
-        "autoencoder": ViTAutoencoder
-    },
-    "vit-l-32": {
-        "encoder": ViTL32Encoder,
-        "decoder": ViTDecoder,
-        "autoencoder": ViTAutoencoder
     }
 }
+
 
 def create_model(
     train_model: str,
     model_unit: str,
     device: torch.device,
-    if_pretrained: bool = False
+    if_pretrained: bool = False,
+    use_grayscale: bool = False
 ) -> torch.nn.Module:
     
     """
@@ -66,19 +50,67 @@ def create_model(
         The created model
     """
 
-    if train_model not in MODEL_REGISTRY:
-        raise ValueError(f"Unknown model type: {train_model}. Available types: {list(MODEL_REGISTRY.keys())}")
+    if "vit" in train_model:
 
-    if model_unit not in MODEL_REGISTRY[train_model]:
-        raise ValueError(f"Unknown model component: {model_unit}. Available components: {list(MODEL_REGISTRY[train_model].keys())}")
+        if use_grayscale:
+            num_channels = 1
+        else:
+            num_channels = 3
 
-    if model_unit == "autoencoder":
-        encoder = MODEL_REGISTRY[train_model]["encoder"](if_pretrained).to(device)
-        decoder = MODEL_REGISTRY[train_model]["decoder"]().to(device)
-        model = MODEL_REGISTRY[train_model]["autoencoder"](encoder, decoder).to(device)
-    elif model_unit == "encoder":
-        model = MODEL_REGISTRY[train_model]["encoder"](if_pretrained).to(device)
+        if model_unit == "autoencoder":
+            if train_model == "vit-b-16":
+                model = mae_vit_customized(
+                    img_size=224, patch_size=16, in_chans=num_channels,
+                    embed_dim=768, depth=12, num_heads=12,
+                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                )
+            elif train_model == "vit-b-32":
+                model = mae_vit_customized( 
+                    img_size=224, patch_size=32, in_chans=num_channels,
+                    embed_dim=768, depth=12, num_heads=12,
+                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                )
+            elif train_model == "vit-l-16":
+                model = mae_vit_customized(
+                    img_size=224, patch_size=16, in_chans=num_channels,
+                    embed_dim=1024, depth=24, num_heads=16,
+                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                )
+            elif train_model == "vit-l-32":
+                model = mae_vit_customized(
+                    img_size=224, patch_size=32, in_chans=num_channels,
+                    embed_dim=1024, depth=24, num_heads=16,
+                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                )
+            else:
+                raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
+                return
+
+        else:
+            raise ValueError("This function only loads MAE model for ViT, to load only encoder, use create_finetune_model_vit function from models_finetune.py")
+            return
+
+        # Move model to device
+        model = model.to(device)
+
     else:
-        model = MODEL_REGISTRY[train_model]["decoder"]().to(device)
+        if train_model not in MODEL_REGISTRY:
+            raise ValueError(f"Unknown model type: {train_model}. Available types: {list(MODEL_REGISTRY.keys())}")
+
+        if model_unit not in MODEL_REGISTRY[train_model]:
+            raise ValueError(f"Unknown model component: {model_unit}. Available components: {list(MODEL_REGISTRY[train_model].keys())}")
+
+        if model_unit == "autoencoder":
+            encoder = MODEL_REGISTRY[train_model]["encoder"](if_pretrained).to(device)
+            decoder = MODEL_REGISTRY[train_model]["decoder"]().to(device)
+            model = MODEL_REGISTRY[train_model]["autoencoder"](encoder, decoder).to(device)
+        elif model_unit == "encoder":
+            model = MODEL_REGISTRY[train_model]["encoder"](if_pretrained).to(device)
+        else:
+            model = MODEL_REGISTRY[train_model]["decoder"]().to(device)
 
     return model

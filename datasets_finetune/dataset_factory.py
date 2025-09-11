@@ -1,22 +1,23 @@
+# Yes, this file is being used in main_finetune.py
+# It is imported at line 17: from datasets_finetune.dataset_factory import DatasetFactory
+# And used at line 165: dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
+
 from typing import Dict, Any
 from torchvision import transforms
 from .base_dataset import BaseDataset
 
-from .classification import HiRISELandmarkDataset, DoMars16Dataset, AtmosphericDustDataset, MartianFrostDataset
-from .conequest import ConeQuestDataset
+from .classification import ClassificationDataset
+from .segmentation import SegmentationDataset
 
 class DatasetFactory:
     @staticmethod
     def create_dataset(dataset_name: str, config: Dict[str, Any], train_transform: transforms.Compose, val_transform: transforms.Compose, args) -> BaseDataset:
-        if dataset_name == "martian_frost":
-            return MartianFrostDataset(config, train_transform, val_transform, args)
-        elif dataset_name == "hirise_landmark":
-            return HiRISELandmarkDataset(config, train_transform, val_transform, args)
-        elif dataset_name == "domars16":
-            return DoMars16Dataset(config, train_transform, val_transform, args)
-        elif (dataset_name == "atmospheric_dust_edr") or (dataset_name == "atmospheric_dust_rdr"):
-            return AtmosphericDustDataset(config, train_transform, val_transform, args)
-        elif dataset_name == "conequest":
-            return ConeQuestDataset(config, train_transform, val_transform, args)
+        # Get task type from config to determine which dataset class to use
+        task_type = config.get("task_type", "").lower()
+        
+        if "segmentation" in task_type:
+            return SegmentationDataset(config, train_transform, val_transform, args)
+        elif "classification" in task_type:
+            return ClassificationDataset(config, train_transform, val_transform, args)
         else:
-            raise ValueError(f"Unknown dataset: {dataset_name}")
+            raise ValueError(f"Unknown task type: {task_type}. Expected 'segmentation' or 'classification' in task_type.")
