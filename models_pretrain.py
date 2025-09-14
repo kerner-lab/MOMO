@@ -6,7 +6,6 @@ from typing import Dict, Type
 from models.resnet import ResNetEncoder, ResNetDecoder, ResNetAutoencoder
 from models.squeezenet import SqueezeNetEncoder, SqueezeNetDecoder, SqueezeNetAutoencoder
 from models.efficientnet import EfficientNetEncoder, EfficientNetDecoder, EfficientNetAutoencoder
-# from models.vit import ViTB16Encoder, ViTB32Encoder, ViTL16Encoder, ViTL32Encoder, ViTDecoder, ViTAutoencoder
 from models.mae import mae_vit_customized
 
 
@@ -57,41 +56,36 @@ def create_model(
         else:
             num_channels = 3
 
-        if model_unit == "autoencoder":
-            if train_model == "vit-b-16":
-                model = mae_vit_customized(
-                    img_size=224, patch_size=16, in_chans=num_channels,
-                    embed_dim=768, depth=12, num_heads=12,
-                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-                )
-            elif train_model == "vit-b-32":
-                model = mae_vit_customized( 
-                    img_size=224, patch_size=32, in_chans=num_channels,
-                    embed_dim=768, depth=12, num_heads=12,
-                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-                )
-            elif train_model == "vit-l-16":
-                model = mae_vit_customized(
-                    img_size=224, patch_size=16, in_chans=num_channels,
-                    embed_dim=1024, depth=24, num_heads=16,
-                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-                )
-            elif train_model == "vit-l-32":
-                model = mae_vit_customized(
-                    img_size=224, patch_size=32, in_chans=num_channels,
-                    embed_dim=1024, depth=24, num_heads=16,
-                    decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-                )
-            else:
-                raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
-                return
-
+        if train_model == "vit-b-16":
+            model = mae_vit_customized(
+                img_size=224, patch_size=16, in_chans=num_channels,
+                embed_dim=768, depth=12, num_heads=12,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+            )
+        elif train_model == "vit-b-32":
+            model = mae_vit_customized( 
+                img_size=224, patch_size=32, in_chans=num_channels,
+                embed_dim=768, depth=12, num_heads=12,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+            )
+        elif train_model == "vit-l-16":
+            model = mae_vit_customized(
+                img_size=224, patch_size=16, in_chans=num_channels,
+                embed_dim=1024, depth=24, num_heads=16,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+            )
+        elif train_model == "vit-l-32":
+            model = mae_vit_customized(
+                img_size=224, patch_size=32, in_chans=num_channels,
+                embed_dim=1024, depth=24, num_heads=16,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+            )
         else:
-            raise ValueError("This function only loads MAE model for ViT, to load only encoder, use create_finetune_model_vit function from models_finetune.py")
+            raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
             return
 
         # Move model to device

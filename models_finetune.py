@@ -79,11 +79,58 @@ class Segmentation(nn.Module):
             nn.ConvTranspose2d(32, out_features, kernel_size=4, stride=2, padding=1)
         )
 
-        # Add the appropriate activation function
-        # self.activation = nn.Sigmoid() if self.num_classes == 1 else nn.Softmax(dim=1)
+    def forward(self, x):
+        features = self.encoder(x)
+        x = self.upsample(features)
+        return x
+
+
+class Segmentation_ViT(nn.Module):
+
+    def __init__(self, encoder):
+        super(Segmentation_ViT, self).__init__()
+        self.encoder = encoder
+
+        # self.upsample = nn.Sequential(
+        #     nn.ConvTranspose2d(1024, 256, kernel_size=4, stride=2, padding=1),
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
+        #     nn.ReLU(),
+        #     nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1)
+        # )
+        latent_dim = 1024
+        hidden_dim = 256
+        output_channels = 1
+        self.upsample = nn.Sequential(
+            nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(hidden_dim // 2),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_dim // 2, hidden_dim // 4, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(hidden_dim // 4),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_dim // 4, hidden_dim // 8, kernel_size=3, stride=2, padding=1, output_padding=1),
+            nn.BatchNorm2d(hidden_dim // 8),
+            nn.ReLU(inplace=True),
+
+            nn.ConvTranspose2d(hidden_dim // 8, output_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
+        )
+
+    @property
+    def blocks(self):
+        return self.encoder.blocks
+
+    def no_weight_decay(self):
+        return self.encoder.no_weight_decay()
 
     def forward(self, x):
         features = self.encoder(x)
+        print(features.shape)
         x = self.upsample(features)
         return x
 
@@ -158,8 +205,7 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
         return
 
     if which_pretraining == "scratch_training":
-        model = model.to(device)
-        return model
+        pass
 
     else:
         if which_pretraining == "imagenet_pretrained":
@@ -184,7 +230,7 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
 
-        if not args.if_evaluation:
+        if not which_pretraining == "evaluation":
             if global_pool:
                 assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
             else:
@@ -192,5 +238,13 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
 
         # manually initialize fc layer
         trunc_normal_(model.head.weight, std=2e-5)
+
+    if "classification" in config["task_type"]:
+        model = model.to(device)
+        return model
+
+    if "segmentation" in config["task_type"]:
+        model.head = nn.Identity()
+        model = Segmentation_ViT(model)
         model = model.to(device)
         return model
