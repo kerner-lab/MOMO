@@ -197,7 +197,7 @@ def save_model(args, output_dir, epoch, model, model_without_ddp, optimizer, los
     output_dir = Path(output_dir)
     epoch_name = str(epoch)
     if loss_scaler is not None:
-        checkpoint_paths = [output_dir / ('checkpoint-%s.pth' % epoch_name)]
+        checkpoint_paths = [output_dir / (f"{args.name_of_run}-{epoch_name}.pth")]
         for checkpoint_path in checkpoint_paths:
             to_save = {
                 'model': model_without_ddp.state_dict(),
@@ -209,7 +209,7 @@ def save_model(args, output_dir, epoch, model, model_without_ddp, optimizer, los
             torch.save(to_save, checkpoint_path)
     else:
         # Simplified checkpoint saving for single GPU
-        checkpoint_path = output_dir / ('checkpoint-%s.pth' % epoch_name)
+        checkpoint_path = output_dir / (f"{args.name_of_run}-{epoch_name}.pth")
         to_save = {
             'model': model.state_dict(),
             'optimizer': optimizer.state_dict(),

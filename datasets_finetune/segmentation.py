@@ -47,6 +47,7 @@ class SegmentationDataset(BaseDataset):
         self.partition = args.partition
         self.train_model = args.train_model
         self.batch_size = args.batch_size
+        self.pin_mem = args.pin_mem
         self.use_positive_only_conequest = args.use_positive_only_conequest
 
         self.train_df, self.val_df, self.test_df = self._prepare_data()

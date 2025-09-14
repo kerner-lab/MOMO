@@ -183,18 +183,16 @@ def main(args):
         if (args.which_pretraining == "imagenet_pretrained") and ("vit" in args.train_model) and (args.encoder_checkpoint is None):
             raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
         pretraining_configuration = "-"
-        name_of_run = f"{args.balance_data}_{args.which_pretraining}"
+        args.name_of_run = f"{args.which_pretraining}_{args.balance_data}"
     elif args.which_pretraining == "finetuning":
         assert args.encoder_checkpoint is not None, "Path of pretrained encoder checkpoint must be provided for finetuning."
-        assert os.path.exists(args.encoder_checkpoint), f"Encoder checkpoint path does not exist: {args.encoder_checkpoint}"
         path_parts = args.encoder_checkpoint.split("/")
-        type_of_model = path_parts[-2]
-        if type_of_model == "combined_models" or "customized_models" in type_of_model:
-            pretraining_configuration = path_parts[-1].replace("_"+args.train_model, "")
+        checkpoint_name, type_of_model = path_parts[-1], path_parts[-2]
+        if "model_merging" in type_of_model:
+            pretraining_configuration = type_of_model.replace("model_merging_", "") + "_" + checkpoint_name.replace(".pth", "")
         else:
-            checkpoint_name = path_parts[-1].split(".")[0].split("_")[-1]
-            pretraining_configuration = f"{path_parts[-2]}_{checkpoint_name}"
-        name_of_run = f"{args.balance_data}_{pretraining_configuration}"
+            pretraining_configuration = checkpoint_name.replace(".pth", "")
+        args.name_of_run = f"{pretraining_configuration}_{args.balance_data}"
     else:
         pass
 
@@ -215,7 +213,6 @@ def main(args):
     train_dataloader = dataset.get_train_dataloader()
     val_dataloader = dataset.get_val_dataloader()
     test_dataloader = dataset.get_test_dataloader()
-    print(len(train_dataloader), len(val_dataloader), len(test_dataloader))
 
     ### Create model
     if "vit" in args.train_model:
@@ -225,7 +222,7 @@ def main(args):
     model = model.to(device)
 
     if args.which_pretraining != "evaluation":
-        output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, name_of_run)
+        output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run)
         os.makedirs(output_dir, exist_ok=True)
 
         ### Create loss function based on the task type
@@ -257,7 +254,7 @@ def main(args):
             wandb.init(
                 entity=args.wandb_entity,
                 project=args.wandb_project,
-                name=args.dataset + "_" + name_of_run + "_" + args.train_model,
+                name=args.dataset + "_" + args.name_of_run + "_" + args.train_model,
                 config={
                     "Dataset": args.dataset,
                     "Model": args.train_model,
@@ -279,7 +276,7 @@ def main(args):
                 model = training_model_classification_vit(
                     model, train_dataloader, val_dataloader,
                     optimizer, device,
-                    output_dir, args.patience, name_of_run,
+                    output_dir, args.patience, args.name_of_run,
                     criterion, loss_scaler, args
                 )
             else:
@@ -287,7 +284,7 @@ def main(args):
                     model, train_dataloader, val_dataloader,
                     optimizer, device,
                     output_dir, args.patience,
-                    name_of_run, criterion, args
+                    args.name_of_run, criterion, args
                 )
             accuracy, precision, recall, f1score = evaluate_model_classification(
                 model=model, test_dataloader=test_dataloader,
@@ -298,12 +295,20 @@ def main(args):
             )
 
         if "segmentation" in config["task_type"]:
-            model = training_model_segmentation(
-                model, train_dataloader, val_dataloader,
-                optimizer, device,
-                config["num_classes"], output_dir, args.patience,
-                name_of_run, criterion, args
-            )
+            if "vit" in args.train_model:
+                model = training_model_segmentation_vit(
+                    model, train_dataloader, val_dataloader,
+                    optimizer, device,
+                    config["num_classes"], output_dir, args.patience,
+                    args.name_of_run, criterion, args
+                )
+            else:
+                model = training_model_segmentation(
+                    model, train_dataloader, val_dataloader,
+                    optimizer, device,
+                    config["num_classes"], output_dir, args.patience,
+                    args.name_of_run, criterion, args
+                )
             result_csv_path = os.path.join("results", f"results_segmentation.csv")
             pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = evaluate_model_segmentation(
                 model=model, test_dataloader=test_dataloader,

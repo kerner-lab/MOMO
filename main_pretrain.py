@@ -11,8 +11,8 @@ import torchvision.transforms as transforms
 import torchvision.datasets as datasets
 
 from data_processing import prepare_dataloaders
-from engine_pretrain import model_training, model_training_vit
 from engine_merging import create_combined_encoder
+from engine_pretrain import model_training, model_training_vit
 from engine_reconstruction import reconstruction
 from models_pretrain import create_model
 
@@ -87,6 +87,7 @@ def get_args_parser():
     # Merging args
     argparser.add_argument("--model_combinations", type=str, default="", required=False,
                         help="Dictionary of pre-trained model paths for validation")
+    argparser.add_argument("--suffix", type=str, default="", required=False)
     argparser.add_argument("--which_merging_technique", type=str, default="task_vectors", required=False,
                         help="Which merging technique to merge models. Available choices: task_vectors, magmax")
     argparser.add_argument("--pretrained_model_path", type=str, default="", required=False,
@@ -119,6 +120,7 @@ def main(args):
         ### Initialize data and model directory, unique name of current run
         args.which_instrument = [item for item in args.which_instrument.split(', ')]
         name_of_run = "_".join([each_instrument.lower() for each_instrument in args.which_instrument])
+        args.name_of_run = name_of_run
         output_dir = os.path.join(args.output_dir, "pretraining", args.train_model, name_of_run)
         print(output_dir)
         os.makedirs(output_dir, exist_ok=True)
@@ -201,9 +203,9 @@ def main(args):
     if args.if_merging:
         model_combinations = parse_dict(args.model_combinations)
         _ = create_combined_encoder(
-            model_combinations, args.pretrained_model_path,
+            model_combinations, args.train_model, args.pretrained_model_path,
             args.which_merging_technique, args.output_dir,
-            device, args.scaling_coef
+            args.suffix, device, args.scaling_coef
         )
 
     ### Model Reconstruction

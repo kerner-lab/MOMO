@@ -7,8 +7,22 @@ from models_pretrain import *
 
 class TaskVector():
 
-    def __init__(self, pretrained_checkpoint=None, finetuned_checkpoint=None, vector=None):
+    @staticmethod
+    def _extract_model_state_dict(checkpoint):
+        """Extract model state dict from checkpoint based on your saving format."""
+        if isinstance(checkpoint, dict):
+            if 'model' in checkpoint:
+                return checkpoint['model']
+            elif 'model_state_dict' in checkpoint:
+                return checkpoint['model_state_dict']
+            elif 'state_dict' in checkpoint:
+                return checkpoint['state_dict']
+            else:
+                return checkpoint
+        else:
+            return checkpoint.state_dict()
 
+    def __init__(self, pretrained_checkpoint=None, finetuned_checkpoint=None, vector=None):
         """
         Initializes the task vector from a pretrained and a finetuned checkpoints.
 
@@ -21,12 +35,25 @@ class TaskVector():
         else:
             assert pretrained_checkpoint is not None and finetuned_checkpoint is not None
             with torch.no_grad():
-                pretrained_state_dict = torch.load(pretrained_checkpoint)#.state_dict()
-                finetuned_state_dict = torch.load(finetuned_checkpoint)#.state_dict()
+                # Load checkpoints and extract model state dicts
+                pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu')
+                finetuned_loaded = torch.load(finetuned_checkpoint, map_location='cpu')
+ 
+                # Extract model state dicts based on your checkpoint format
+                pretrained_state_dict = self._extract_model_state_dict(pretrained_loaded)
+                finetuned_state_dict = self._extract_model_state_dict(finetuned_loaded)
                 self.vector = {}
                 for key in pretrained_state_dict:
+                    # Check if the value is a tensor and has the right dtype
+                    if not isinstance(pretrained_state_dict[key], torch.Tensor):
+                        continue
                     if pretrained_state_dict[key].dtype in [torch.int64, torch.uint8]:
                         continue
+                    if key not in finetuned_state_dict:
+                        continue
+                    if not isinstance(finetuned_state_dict[key], torch.Tensor):
+                        continue
+
                     self.vector[key] = finetuned_state_dict[key] - pretrained_state_dict[key]
 
 
@@ -56,7 +83,7 @@ class TaskVector():
         with torch.no_grad():
             new_vector = {}
             for key in self.vector:
-                new_vector[key] = - self.vector[key]
+                new_vector[key] = -self.vector[key]
 
         return TaskVector(vector=new_vector)
 
@@ -71,12 +98,15 @@ class TaskVector():
                 device=device,
                 if_pretrained=False
             )
-            pretrained_state_dict = torch.load(pretrained_checkpoint)
+            # Load checkpoint and extract model state dict
+            pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu')
+            pretrained_state_dict = self._extract_model_state_dict(pretrained_loaded)
             new_state_dict = {}
             for key in pretrained_state_dict:
                 if key not in self.vector:
                     # print(f'Warning: key {key} is present in the pretrained state dict but not in the task vector')
                     continue
+
                 new_state_dict[key] = pretrained_state_dict[key] + scaling_coef * self.vector[key]
         pretrained_model.load_state_dict(new_state_dict, strict=False)
 

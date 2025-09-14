@@ -56,7 +56,7 @@ def training_model_classification(model: torch.nn.Module,
 
         # Validation loop
         model.eval()
-        val_loss, correct, total = 0.0, 0, 0
+        val_loss, correct, ground_truth, prediction = 0.0, [], []
 
         with torch.no_grad():
             for inputs, labels, _ in tqdm(val_dataloader, desc=f"Epoch [{epoch+1}/{args.num_epochs}] Validation"):
@@ -68,19 +68,13 @@ def training_model_classification(model: torch.nn.Module,
                 loss = criterion(outputs, labels)
                 val_loss += loss.item()
 
-                # Handle both binary and multi-class cases
-                if outputs.dim() == 1 or (outputs.dim() == 2 and outputs.shape[1] == 1):
-                    # Binary classification
-                    predicted = (outputs > 0.5).long()
-                else:
-                    # Multi-class classification
-                    _, predicted = torch.max(outputs, 1)
-                
-                total += labels.size(0)
-                correct += (predicted == labels.long()).sum().item()
+                output = torch.nn.functional.softmax(outputs, dim=1)
+                label = output.cpu().detach().numpy()
+                prediction.append(np.argmax(label))
+                ground_truth.append(labels.cpu().numpy()[0])
 
         val_loss /= len(val_dataloader)
-        val_accuracy = 100 * correct / total
+        val_accuracy = accuracy_score(ground_truth, prediction)
 
         # Print logs and update wandb
         print(f"Epoch [{epoch+1}/{args.num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}")
@@ -175,7 +169,7 @@ def training_model_classification_vit(model: torch.nn.Module,
 
             accum_iter = args.accum_iter
 
-            ground_truth, prediction = [] ,[]
+            ground_truth, prediction = [], []
             for data_iter_step, (samples, targets, _) in enumerate(metric_logger.log_every(val_dataloader, print_freq, header)):
                 samples = samples.to(device, non_blocking=True)
                 targets = targets.to(device, non_blocking=True)
@@ -374,6 +368,134 @@ def training_model_segmentation(model: torch.nn.Module,
         # Save finetuned model
         if ((epoch + 1) % 2 == 0) or (epoch == 0):
             torch.save(model.state_dict(), os.path.join(output_dir, f"checkpoint_{epoch+1}.pth"))
+
+    return model
+
+
+def training_model_segmentation_vit(model: torch.nn.Module,
+                train_dataloader: Iterable, val_dataloader: Iterable,
+                optimizer: torch.optim.Optimizer, device: torch.device,
+                num_classes: int, output_dir: str, patience: int,
+                name_of_run: str, criterion, args):
+
+    best_val_loss = float('inf')
+    patience_counter = 0
+
+    for epoch in tqdm(range(args.num_epochs), desc=name_of_run):
+
+        # Training loop
+        model.train(True)
+        metric_logger = misc.MetricLogger(delimiter="  ")
+        metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
+        header = 'Epoch: [{}]'.format(epoch)
+        print_freq = 20
+
+        accum_iter = args.accum_iter
+        optimizer.zero_grad()
+
+        for data_iter_step, (samples, targets, _) in enumerate(metric_logger.log_every(train_dataloader, print_freq, header)):
+
+            if data_iter_step % accum_iter == 0:
+                lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(train_dataloader) + epoch, args)
+
+            samples = samples.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
+
+            with torch.cuda.amp.autocast():
+                outputs = model(samples)
+                print(outputs.shape, targets.shape)
+                loss = criterion(outputs, targets)
+
+            loss_value = loss.item()
+
+            if not math.isfinite(loss_value):
+                print("Loss is {}, stopping training".format(loss_value))
+                sys.exit(1)
+
+            loss /= accum_iter
+            loss_scaler(loss, optimizer, clip_grad=args.max_norm,
+                        parameters=model.parameters(), create_graph=False,
+                        update_grad=(data_iter_step + 1) % accum_iter == 0)
+            if (data_iter_step + 1) % accum_iter == 0:
+                optimizer.zero_grad()
+
+            torch.cuda.synchronize()
+
+            metric_logger.update(loss=loss_value)
+            min_lr = 10.
+            max_lr = 0.
+            for group in optimizer.param_groups:
+                min_lr = min(min_lr, group["lr"])
+                max_lr = max(max_lr, group["lr"])
+
+            metric_logger.update(lr=max_lr)
+            current_training_loss = metric_logger.meters["loss"].global_avg
+
+        # Validation loop
+        model.eval()
+        with torch.no_grad():
+            metric_logger = misc.MetricLogger(delimiter="  ")
+            header = 'Validation Epoch: [{}]'.format(epoch)
+            print_freq = 20
+
+            accum_iter = args.accum_iter
+
+            val_iou = 0
+            for data_iter_step, (samples, targets, _) in enumerate(metric_logger.log_every(val_dataloader, print_freq, header)):
+                samples = samples.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
+
+                with torch.cuda.amp.autocast():
+                    outputs = model(samples)
+                    loss = criterion(outputs, targets)
+
+                loss_value = loss.item()
+
+                if not math.isfinite(loss_value):
+                    print("Loss is {}, stopping training".format(loss_value))
+                    sys.exit(1)
+
+                metric_logger.update(loss=loss_value)
+
+                if num_classes == 1:
+                    posterior = torch.sigmoid(outputs)
+                    prediction = torch.where(posterior > 0.5, 1, 0)
+                else:
+                    posterior = torch.softmax(outputs, dim=1)
+                    prediction = torch.argmax(posterior)
+                tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
+                val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item()
+
+                current_validation_loss = metric_logger.meters["loss"].global_avg
+
+        val_iou /= len(val_dataloader)
+
+        # Print logs and update wandb
+        print(f"Epoch [{epoch+1}/{args.num_epochs}], Train Loss: {current_training_loss:.4f}, Val Loss: {current_validation_loss:.4f}, Val IoU: {val_iou:.4f}")
+        if args.wandb_enabled:
+            wandb.log({
+                "epoch": epoch + 1,
+                "train_loss": current_training_loss,
+                "val_loss": current_validation_loss,
+                "val_iou": val_iou
+            })
+
+        # Early stopping check
+        if current_validation_loss < best_val_loss:
+            best_val_loss = current_validation_loss
+            patience_counter = 0
+            misc.save_model(
+                args=args, output_dir=output_dir, model=model, model_without_ddp=model, optimizer=optimizer,
+                loss_scaler=loss_scaler, epoch="best")
+        else:
+            patience_counter += 1
+            if patience_counter >= patience:
+                print(f"Early stopping triggered after {epoch + 1} epochs")
+
+    # Save the last checkpoint
+    misc.save_model(
+        args=args, output_dir=output_dir, model=model, model_without_ddp=model, optimizer=optimizer,
+        loss_scaler=loss_scaler, epoch="last")
 
     return model
 

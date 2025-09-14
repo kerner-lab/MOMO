@@ -54,28 +54,28 @@ def model_training(
             val_loss /= len(val_dataloader)
 
             # Store metrics
-            training_metrics["epochs"].append(epoch + 1)
+            training_metrics["epochs"].append(epoch)
             training_metrics["train_loss"].append(float(train_loss.item()))
             training_metrics["val_loss"].append(float(val_loss))
 
             # Log to wandb
             if args.wandb_enabled:
                 wandb.log({
-                    "epoch": epoch + 1,
+                    "epoch": epoch,
                     "train_loss": train_loss,
                     "val_loss": val_loss
                 })
-            print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {train_loss.item():.4f}, Val Loss: {val_loss:.4f}")
+            print(f"Epoch [{epoch}/{num_epochs}], Train Loss: {train_loss.item():.4f}, Val Loss: {val_loss:.4f}")
 
             # Save the encoder part of the model
-            if ((epoch + 1) % 1 == 0) or (epoch == 0):
+            if ((epoch) % 1 == 0) or (epoch == 0):
                 # Save the encoder and decoder part of the model separately
-                torch.save(model.encoder.state_dict(), os.path.join(output_dir, f"encoder_epoch_{epoch+1}.pth"))
-                torch.save(model.decoder.state_dict(), os.path.join(output_dir, f"decoder_epoch_{epoch+1}.pth"))
+                torch.save(model.encoder.state_dict(), os.path.join(output_dir, f"{args.name_of_run}-{epoch}.pth"))
+                torch.save(model.decoder.state_dict(), os.path.join(output_dir, f"{args.name_of_run}-decoder-{epoch}.pth"))
 
 
     # Save training metrics to JSON file
-    metrics_file = os.path.join(output_dir, "training_metrics.json")
+    metrics_file = os.path.join(output_dir, f"{args.name_of_run}-training_metrics.json")
     with open(metrics_file, 'w') as f:
         json.dump(training_metrics, f, indent=4)
 
@@ -164,7 +164,7 @@ def model_training_vit(
                     current_validation_loss = metric_logger.meters["loss"].global_avg
 
             # Store metrics
-            training_metrics["epochs"].append(epoch + 1)
+            training_metrics["epochs"].append(epoch)
             training_metrics["train_loss"].append(float(current_training_loss))
             training_metrics["val_loss"].append(float(current_validation_loss))
 
@@ -177,16 +177,16 @@ def model_training_vit(
                         "Epoch": epoch
                     }
                 )
-            print(f"Epoch [{epoch+1}/{num_epochs}], Train Loss: {current_training_loss:.4f}, Val Loss: {current_validation_loss:.4f}")
+            print(f"Epoch [{epoch}/{num_epochs}], Train Loss: {current_training_loss:.4f}, Val Loss: {current_validation_loss:.4f}")
 
             # Save the encoder part of the model
-            if ((epoch + 1) % 1 == 0) or (epoch == 0):
+            if ((epoch) % 1 == 0) or (epoch == 0):
                 misc.save_model(
                     args=args, output_dir=output_dir, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
                     loss_scaler=loss_scaler, epoch=epoch)
 
     # Save training metrics to JSON file
-    metrics_file = os.path.join(output_dir, "training_metrics.json")
+    metrics_file = os.path.join(output_dir, f"{args.name_of_run}-training_metrics.json")
     with open(metrics_file, 'w') as f:
         json.dump(training_metrics, f, indent=4)
 
