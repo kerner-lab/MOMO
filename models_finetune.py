@@ -87,38 +87,60 @@ class Segmentation(nn.Module):
 
 class Segmentation_ViT(nn.Module):
 
-    def __init__(self, encoder):
+    def __init__(self, encoder, encoder_output_dim):
         super(Segmentation_ViT, self).__init__()
         self.encoder = encoder
 
-        # self.upsample = nn.Sequential(
-        #     nn.ConvTranspose2d(1024, 256, kernel_size=4, stride=2, padding=1),
-        #     nn.ReLU(),
-        #     nn.ConvTranspose2d(256, 128, kernel_size=4, stride=2, padding=1),
-        #     nn.ReLU(),
-        #     nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),
-        #     nn.ReLU(),
-        #     nn.ConvTranspose2d(64, 32, kernel_size=4, stride=2, padding=1),
-        #     nn.ReLU(),
-        #     nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1)
-        # )
-        latent_dim = 1024
-        hidden_dim = 256
-        output_channels = 1
-        self.upsample = nn.Sequential(
-            nn.ConvTranspose2d(hidden_dim, hidden_dim // 2, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(hidden_dim // 2),
+        # Encoder output dimensions
+        self.encoder_output_dim = encoder_output_dim
+
+        # Decoder dimensions
+        decoder_base_channels = 256
+        self.decoder_base_channels = decoder_base_channels
+        num_output_classes = 1
+
+        # Spatial dimensions for reconstruction
+        # Feature map width/height after linear projection
+        # Logic: feature_map_size = desired_output_size / total_upsampling_factor
+        # For 512x512 output with 4 upsampling layers (2^4 = 16x), use 32x32
+        feature_map_size = 32
+        self.feature_map_size = feature_map_size
+
+        # Linear projection from encoder output to spatial feature maps
+        projected_feature_dim = feature_map_size * feature_map_size * decoder_base_channels
+        self.encoder_to_spatial = nn.Linear(encoder_output_dim, projected_feature_dim)
+
+        # Decoder: Progressive upsampling with channel reduction
+        self.decoder = nn.Sequential(
+            # Stage 1: 32x32 -> 64x64, channels: 256 -> 128
+            nn.ConvTranspose2d(
+                in_channels=decoder_base_channels, out_channels=decoder_base_channels // 2, 
+                kernel_size=3, stride=2, padding=1, output_padding=1
+            ),
+            nn.BatchNorm2d(decoder_base_channels // 2),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(hidden_dim // 2, hidden_dim // 4, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(hidden_dim // 4),
+            # Stage 2: 64x64 -> 128x128, channels: 128 -> 64
+            nn.ConvTranspose2d(
+                in_channels=decoder_base_channels // 2, out_channels=decoder_base_channels // 4, 
+                kernel_size=3, stride=2, padding=1, output_padding=1
+            ),
+            nn.BatchNorm2d(decoder_base_channels // 4),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(hidden_dim // 4, hidden_dim // 8, kernel_size=3, stride=2, padding=1, output_padding=1),
-            nn.BatchNorm2d(hidden_dim // 8),
+            # Stage 3: 128x128 -> 256x256, channels: 64 -> 32
+            nn.ConvTranspose2d(
+                in_channels=decoder_base_channels // 4, out_channels=decoder_base_channels // 8, 
+                kernel_size=3, stride=2, padding=1, output_padding=1
+            ),
+            nn.BatchNorm2d(decoder_base_channels // 8),
             nn.ReLU(inplace=True),
 
-            nn.ConvTranspose2d(hidden_dim // 8, output_channels, kernel_size=3, stride=2, padding=1, output_padding=1)
+            # Stage 4: 256x256 -> 512x512, channels: 32 -> num_classes
+            nn.ConvTranspose2d(
+                in_channels=decoder_base_channels // 8, out_channels=num_output_classes, 
+                kernel_size=3, stride=2, padding=1, output_padding=1
+            )
         )
 
     @property
@@ -130,8 +152,9 @@ class Segmentation_ViT(nn.Module):
 
     def forward(self, x):
         features = self.encoder(x)
-        print(features.shape)
-        x = self.upsample(features)
+        features = self.encoder_to_spatial(features)
+        features = features.reshape((-1, self.decoder_base_channels, self.feature_map_size, self.feature_map_size))
+        x = self.decoder(features)
         return x
 
 
@@ -176,28 +199,36 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
 
 def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_pool, config, pretrained_path, device, args):
 
+    if "vit-b" in train_model:
+        encoder_output_dim = 768
+    elif "vit-l" in train_model:
+        encoder_output_dim = 1024
+    else:
+        raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
+
+
     if train_model == "vit-b-16":
         model = vit_customized(
             img_size=224, patch_size=16, in_chans=3,
-            embed_dim=768, depth=12, num_heads=12,
+            embed_dim=encoder_output_dim, depth=12, num_heads=12,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     elif train_model == "vit-b-32":
         model = vit_customized(
             img_size=224, patch_size=32, in_chans=3,
-            embed_dim=768, depth=12, num_heads=12,
+            embed_dim=encoder_output_dim, depth=12, num_heads=12,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     elif train_model == "vit-l-16":
         model = vit_customized(
             img_size=224, patch_size=16, in_chans=3,
-            embed_dim=1024, depth=24, num_heads=16,
+            embed_dim=encoder_output_dim, depth=24, num_heads=16,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     elif train_model == "vit-l-32":
         model = vit_customized(
             img_size=224, patch_size=32, in_chans=3,
-            embed_dim=1024, depth=24, num_heads=16,
+            embed_dim=encoder_output_dim, depth=24, num_heads=16,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     else:
@@ -208,13 +239,7 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
         pass
 
     else:
-        if which_pretraining == "imagenet_pretrained":
-            if "vit-b" in train_model:
-                checkpoint = torch.load((os.path.join(pretrained_path, "mae_pretrain_vit_base.pth")), map_location='cpu')
-            else:
-                checkpoint = torch.load(os.path.join(pretrained_path, "mae_pretrain_vit_large.pth"), map_location='cpu')
-        else:
-            checkpoint = torch.load(pretrained_path, map_location='cpu')
+        checkpoint = torch.load(pretrained_path, map_location='cpu')
 
         print("Load pre-trained checkpoint from: %s" % pretrained_path)
         checkpoint_model = checkpoint['model']
@@ -245,6 +270,6 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
 
     if "segmentation" in config["task_type"]:
         model.head = nn.Identity()
-        model = Segmentation_ViT(model)
+        model = Segmentation_ViT(model, encoder_output_dim)
         model = model.to(device)
         return model

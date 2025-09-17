@@ -92,8 +92,7 @@ class ClassificationDataset(BaseDataset):
             train_dataloader = torch.utils.data.DataLoader(
                 train_dataset, sampler=sampler_train,
                 batch_size=self.batch_size,
-                pin_memory=self.pin_mem,
-                drop_last=True,
+                pin_memory=self.pin_mem
             )
         else:
             train_dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
@@ -106,8 +105,7 @@ class ClassificationDataset(BaseDataset):
             val_dataloader = torch.utils.data.DataLoader(
                 val_dataset, sampler=sampler_val,
                 batch_size=self.batch_size,
-                pin_memory=self.pin_mem,
-                drop_last=True,
+                pin_memory=self.pin_mem
             )
         else:
             val_dataloader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
@@ -118,12 +116,11 @@ class ClassificationDataset(BaseDataset):
         return DataLoader(test_dataset, batch_size=1, shuffle=False)
 
     def get_class_weights(self):
-        labels = self.train_df['label'].values
-        classes = np.unique(labels)
         class_weights = compute_class_weight(
             class_weight='balanced',
-            classes=classes,
-            y=labels
+            classes=np.unique(self.train_df['label']),
+            y=self.train_df['label']
         )
-        return class_weights.astype(np.float32)
-
+        class_weight_dict = dict(zip(np.unique(self.train_df['label']), class_weights))
+        print(class_weight_dict)
+        return class_weights

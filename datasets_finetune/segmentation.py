@@ -70,9 +70,9 @@ class SegmentationDataset(BaseDataset):
             test_df = self._get_data_df(os.path.join(self.data_dir, "data"), "test")
 
         if ("conequest" in self.data_dir) and self.use_positive_only_conequest:
-            data_df = pd.read_csv(os.path.join(self.data_dir, "metadata.csv"))
-            data_df = data_df.loc[data_df["Number of Cones"]!=0]
-            valid_names = data_df["Patch Id"]
+            metadata_df = pd.read_csv(os.path.join(self.data_dir, "metadata.csv"))
+            metadata_df = metadata_df.loc[metadata_df["Number of Cones"]!=0]
+            valid_names = metadata_df["Patch Id"]
             train_df = train_df.merge(valid_names, on="Patch Id")
             val_df = val_df.merge(valid_names, on="Patch Id")
             test_df = test_df.merge(valid_names, on="Patch Id")

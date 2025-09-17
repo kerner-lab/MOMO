@@ -1,9 +1,13 @@
 
 import os
+import argparse
 
 import torch
 from typing import Dict
+
 from task_vectors import TaskVector, merge_max_abs
+import utils.misc as misc
+
 
 def create_combined_encoder(
     model_combination: Dict[str, str],
@@ -13,7 +17,8 @@ def create_combined_encoder(
     output_dir: str,
     suffix: str,
     device: torch.device,
-    scaling_coef: float = 0.5
+    scaling_coef: float,
+    args: argparse.Namespace
 ) -> torch.nn.Module:
     """
     Create a combined encoder using task vectors.
@@ -58,8 +63,11 @@ def create_combined_encoder(
     save_dir = os.path.join(output_dir, "pretraining", train_model, f"model_merging_{which_merging_technique}")
     os.makedirs(save_dir, exist_ok=True)
 
-    save_path = os.path.join(save_dir, f"{combined_model_name}_{suffix}.pth")
-    print(f"Saving combined encoder to {save_path}")
-    torch.save(combined_encoder.state_dict(), save_path)
+    print(f"Saving combined encoder to {os.path.join(save_dir, f'{combined_model_name}_{suffix}.pth')}")
+
+    if "vit" in train_model:
+        misc.save_model(args, save_dir, f"{combined_model_name}_{suffix}", combined_encoder)
+    else:
+        torch.save(combined_encoder.state_dict(), os.path.join(save_dir, f"{combined_model_name}_{suffix}.pth"))
 
     return combined_encoder

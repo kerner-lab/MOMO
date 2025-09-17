@@ -138,7 +138,8 @@ def model_training_vit(
 
                 lr = optimizer.param_groups[0]["lr"]
                 metric_logger.update(lr=lr)
-                current_training_loss = metric_logger.meters["loss"].global_avg
+
+            current_training_loss = metric_logger.meters["loss"].global_avg
 
             # Validation
             model.eval()
@@ -161,7 +162,8 @@ def model_training_vit(
                         sys.exit(1)
 
                     metric_logger.update(loss=loss_value)
-                    current_validation_loss = metric_logger.meters["loss"].global_avg
+
+            current_validation_loss = metric_logger.meters["loss"].global_avg
 
             # Store metrics
             training_metrics["epochs"].append(epoch)
@@ -181,9 +183,7 @@ def model_training_vit(
 
             # Save the encoder part of the model
             if ((epoch) % 1 == 0) or (epoch == 0):
-                misc.save_model(
-                    args=args, output_dir=output_dir, model=model, model_without_ddp=model_without_ddp, optimizer=optimizer,
-                    loss_scaler=loss_scaler, epoch=epoch)
+                misc.save_model(args=args, output_dir=output_dir, save_name=f"{args.name_of_run}-{epoch}",model=model)
 
     # Save training metrics to JSON file
     metrics_file = os.path.join(output_dir, f"{args.name_of_run}-training_metrics.json")

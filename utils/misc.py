@@ -153,7 +153,7 @@ class NativeScalerWithGradNormCount:
     state_dict_key = "amp_scaler"
 
     def __init__(self):
-        self._scaler = torch.cuda.amp.GradScaler()
+        self._scaler = torch.cuda.amp.GradScaler(init_scale=655360.0)
 
     def __call__(self, loss, optimizer, clip_grad=None, parameters=None, create_graph=False, update_grad=True):
         self._scaler.scale(loss).backward(create_graph=create_graph)
@@ -193,30 +193,14 @@ def get_grad_norm_(parameters, norm_type: float = 2.0) -> torch.Tensor:
     return total_norm
 
 
-def save_model(args, output_dir, epoch, model, model_without_ddp, optimizer, loss_scaler):
+def save_model(args, output_dir, save_name, model):
     output_dir = Path(output_dir)
-    epoch_name = str(epoch)
-    if loss_scaler is not None:
-        checkpoint_paths = [output_dir / (f"{args.name_of_run}-{epoch_name}.pth")]
-        for checkpoint_path in checkpoint_paths:
-            to_save = {
-                'model': model_without_ddp.state_dict(),
-                'optimizer': optimizer.state_dict(),
-                'epoch': epoch,
-                'scaler': loss_scaler.state_dict(),
-                'args': args,
-            }
-            torch.save(to_save, checkpoint_path)
-    else:
-        # Simplified checkpoint saving for single GPU
-        checkpoint_path = output_dir / (f"{args.name_of_run}-{epoch_name}.pth")
-        to_save = {
-            'model': model.state_dict(),
-            'optimizer': optimizer.state_dict(),
-            'epoch': epoch,
-            'args': args,
-        }
-        torch.save(to_save, checkpoint_path)
+    checkpoint_path = output_dir / (f"{save_name}.pth")
+    to_save = {
+        'model': model.state_dict(),
+        'args': args,
+    }
+    torch.save(to_save, checkpoint_path)
 
 
 def load_model(args, model_without_ddp, optimizer, loss_scaler):

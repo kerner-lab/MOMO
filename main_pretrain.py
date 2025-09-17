@@ -205,7 +205,7 @@ def main(args):
         _ = create_combined_encoder(
             model_combinations, args.train_model, args.pretrained_model_path,
             args.which_merging_technique, args.output_dir,
-            args.suffix, device, args.scaling_coef
+            args.suffix, device, args.scaling_coef, args
         )
 
     ### Model Reconstruction
