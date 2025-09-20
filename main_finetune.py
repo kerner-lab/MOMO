@@ -185,10 +185,16 @@ def main(args):
 
         ### Initialize wandb
         if args.wandb_enabled:
+            if args.few_shot:
+                wandb_name = args.dataset + "_" + args.name_of_run + "_" + args.train_model + "_" + args.few_shot
+            elif args.partition:
+                wandb_name = args.dataset + "_" + args.name_of_run + "_" + args.train_model + "_" + args.partition
+            else:
+                wandb_name = args.dataset + "_" + args.name_of_run + "_" + args.train_model
             wandb.init(
                 entity=args.wandb_entity,
                 project=args.wandb_project,
-                name=args.dataset + "_" + args.name_of_run + "_" + args.train_model + "_" + args.few_shot,
+                name=wandb_name,
                 config={
                     "Dataset": args.dataset,
                     "Balance data": args.balance_data,
