@@ -1,6 +1,7 @@
 
 import cv2
 import numpy as np
+import multiprocessing as mp
 import os
 import pandas as pd
 
@@ -18,27 +19,45 @@ from .base_dataset import BaseDataset
 
 class CustomDataset(Dataset):
 
-    def __init__(self, data_dir: str, df: pd.DataFrame, transform: transforms.Compose):
+    def __init__(self, data_dir: str, df, transform: transforms.Compose):
         self.data_dir = data_dir
-        self.df = df
+        self.df = df.reset_index(drop=True)
         self.transform = transform
 
+        self.image_paths = []
+        self.labels = []
+        self.filenames = []
+
+        for idx, row in df.iterrows():
+            image_path = os.path.join(data_dir, "data", row["split"], row["feature_name"], row["file_id"])
+            self.image_paths.append(image_path)
+            self.labels.append(row["label"])
+            self.filenames.append(row["file_id"])
+
+        self.labels = torch.tensor(self.labels, dtype=torch.long)
+
     def __len__(self):
-        return len(self.df)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        image_path = os.path.join(self.data_dir, "data", row["split"], row["feature_name"], row["file_id"])
-        label = row["label"]
-        filename = image_path.split("/")[-1]
 
-        image = cv2.imread(image_path)
-        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        if "change_cls" in self.data_dir:
+            image_id_before = self.image_paths[idx]
+            image_id_after = self.image_paths[idx].replace("before", "after")
+            layer_before = cv2.imread(image_id_before, cv2.IMREAD_GRAYSCALE)
+            layer_zero = np.zeros((layer_before.shape[0], layer_before.shape[1]), dtype=layer_before.dtype)
+            layer_after = cv2.imread(image_id_after, cv2.IMREAD_GRAYSCALE)
+            image = np.stack([layer_zero, layer_after, layer_before], axis=-1)
+        else:
+            image = cv2.imread(self.image_paths[idx])
+            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         if self.transform:
-            image = self.transform(image)
+            transformed = self.transform(image=image)
+            image = transformed["image"]
 
-        return image, label, filename
+        return image, self.labels[idx], self.filenames[idx]
+
 
 
 class ClassificationDataset(BaseDataset):
@@ -70,50 +89,59 @@ class ClassificationDataset(BaseDataset):
 
         if self.balance == "under_sample":
             min_samples = train_df['label'].value_counts().min()
-            train_df = train_df.groupby('label').apply(lambda x: x.sample(n=min_samples, random_state=42)).reset_index(drop=True)
+            train_df = (train_df.groupby('label', group_keys=False)
+                       .apply(lambda x: x.sample(n=min_samples, random_state=42)).reset_index(drop=True))
         elif self.balance == "over_sample":
+            X = train_df.drop(columns=['label'])
+            y = train_df['label']
             ros = RandomOverSampler(random_state=42)
-            # Only use label column for y
-            X_resampled, y_resampled = ros.fit_resample(train_df.drop(columns=['label']), train_df['label'])
-            # Combine the resampled features with the resampled labels
+            X_resampled, y_resampled = ros.fit_resample(X, y)
             train_df = pd.concat([X_resampled, pd.Series(y_resampled, name='label')], axis=1)
-            # Ensure labels are still in the correct range
-            train_df['label'] = train_df['label'].astype(int)
+            train_df['label'] = train_df['label'].astype('int32')
 
         return train_df, val_df, test_df
 
-    def _create_dataset(self, data_dir: str, df: pd.DataFrame, is_training: bool) -> Dataset:
+    def _create_dataset(self, df: pd.DataFrame, is_training: bool) -> Dataset:
         return CustomDataset(self.data_dir, df, self.train_transform if is_training else self.val_transform)
 
     def get_train_dataloader(self) -> DataLoader:
-        train_dataset = self._create_dataset(self.data_dir, self.train_df, is_training=True)
-        if "vit" in self.train_model:
-            sampler_train = torch.utils.data.RandomSampler(train_dataset)
-            train_dataloader = torch.utils.data.DataLoader(
-                train_dataset, sampler=sampler_train,
-                batch_size=self.batch_size,
-                pin_memory=self.pin_mem
-            )
-        else:
-            train_dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        train_dataset = self._create_dataset(self.train_df, is_training=True)
+        sampler_train = torch.utils.data.RandomSampler(train_dataset)
+        train_dataloader = DataLoader(
+            train_dataset, sampler=sampler_train,
+            batch_size=self.batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem,
+            prefetch_factor=2
+        )
         return train_dataloader
 
     def get_val_dataloader(self) -> DataLoader:
-        val_dataset = self._create_dataset(self.data_dir, self.val_df, is_training=False)
-        if "vit" in self.train_model:
-            sampler_val = torch.utils.data.SequentialSampler(val_dataset)
-            val_dataloader = torch.utils.data.DataLoader(
-                val_dataset, sampler=sampler_val,
-                batch_size=self.batch_size,
-                pin_memory=self.pin_mem
-            )
-        else:
-            val_dataloader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        val_dataset = self._create_dataset(self.val_df, is_training=False)
+        sampler_val = torch.utils.data.SequentialSampler(val_dataset)
+        val_dataloader = DataLoader(
+            val_dataset, sampler=sampler_val,
+            batch_size=self.batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem,
+            prefetch_factor=2
+        )
         return val_dataloader
 
     def get_test_dataloader(self) -> DataLoader:
-        test_dataset = self._create_dataset(self.data_dir, self.test_df, is_training=False)
-        return DataLoader(test_dataset, batch_size=1, shuffle=False)
+        test_dataset = self._create_dataset(self.test_df, is_training=False)
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem,
+            prefetch_factor=2
+        )
+        return test_dataloader
 
     def get_class_weights(self):
         class_weights = compute_class_weight(

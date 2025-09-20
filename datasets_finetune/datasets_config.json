@@ -6,19 +6,19 @@
       "label_dict": {"Background": 0, "Frost": 1},
       "label_dict_reverse": {"0": "Background", "1": "Frost"}
     },
-    "mb-landmark_cls": {
-      "num_classes": 8,
-      "task_type": "multi-class classification",
-      "input_size": [227, 227],
-      "label_dict": {"Other": 0, "Crater": 1, "Dark dune": 2, "Slope Streak": 3, "Bright dune": 4, "Impact ejecta": 5, "Swiss cheese": 6, "Spider": 7},
-      "label_dict_reverse": {"0": "Other", "1": "Crater", "2": "Dark dune", "3": "Slope Streak", "4": "Bright dune", "5": "Impact ejecta", "6": "Swiss cheese", "7": "Spider"}
+    "mb-change_cls_ctx": {
+      "num_classes": 2,
+      "task_type": "binary classification",
+      "input_size": [150, 150],
+      "label_dict": {"No Change": 0, "Change": 1},
+      "label_dict_reverse": {"0": "No Change", "1": "Change"}
     },
-    "mb-domars16k": {
-      "num_classes": 15,
-      "task_type": "multi-class classification",
-      "input_size": [200, 200],
-      "label_dict": {"Aeolian Curved": 0, "Aeolian Straight": 1, "Cliff": 2, "Crater": 3, "Slope Streaks": 4, "Channel": 5, "Gullies": 6, "Mass Wasting": 7, "Mix Terrain": 8, "Ridge": 9, "Rough Terrain": 10, "Mounds": 11, "Crater Field": 12, "Smooth Terrain": 13, "Textured Terrain": 14},
-      "label_dict_reverse": {"0": "Aeolian Curved", "1": "Aeolian Straight", "2": "Cliff", "3": "Crater", "4": "Slope Streaks", "5": "Channel", "6": "Gullies", "7": "Mass Wasting", "8": "Mix Terrain", "9": "Ridge", "10": "Rough Terrain", "11": "Mounds", "12": "Crater Field", "13": "Smooth Terrain", "14": "Textured Terrain"}
+    "mb-change_cls_hirise": {
+      "num_classes": 2,
+      "task_type": "binary classification",
+      "input_size": [100, 100],
+      "label_dict": {"No Change": 0, "Change": 1},
+      "label_dict_reverse": {"0": "No Change", "1": "Change"}
     },
     "mb-atmospheric_dust_cls_edr": {
       "num_classes": 2,
@@ -34,11 +34,46 @@
       "label_dict": {"dusty": 0, "not_dusty": 1},
       "label_dict_reverse": {"0": "dusty", "1": "not_dusty"}
     },
+    "mb-landmark_cls": {
+      "num_classes": 8,
+      "task_type": "multi-class classification",
+      "input_size": [227, 227],
+      "label_dict": {"Other": 0, "Crater": 1, "Dark dune": 2, "Slope Streak": 3, "Bright dune": 4, "Impact ejecta": 5, "Swiss cheese": 6, "Spider": 7},
+      "label_dict_reverse": {"0": "Other", "1": "Crater", "2": "Dark dune", "3": "Slope Streak", "4": "Bright dune", "5": "Impact ejecta", "6": "Swiss cheese", "7": "Spider"}
+    },
+    "mb-domars16k": {
+      "num_classes": 15,
+      "task_type": "multi-class classification",
+      "input_size": [200, 200],
+      "label_dict": {"Aeolian Curved": 0, "Aeolian Straight": 1, "Cliff": 2, "Crater": 3, "Slope Streaks": 4, "Channel": 5, "Gullies": 6, "Mass Wasting": 7, "Mix Terrain": 8, "Ridge": 9, "Rough Terrain": 10, "Mounds": 11, "Crater Field": 12, "Smooth Terrain": 13, "Textured Terrain": 14},
+      "label_dict_reverse": {"0": "Aeolian Curved", "1": "Aeolian Straight", "2": "Cliff", "3": "Crater", "4": "Slope Streaks", "5": "Channel", "6": "Gullies", "7": "Mass Wasting", "8": "Mix Terrain", "9": "Ridge", "10": "Rough Terrain", "11": "Mounds", "12": "Crater Field", "13": "Smooth Terrain", "14": "Textured Terrain"}
+    },
     "mb-conequest_seg": {
       "num_classes": 1,
       "task_type": "binary segmentation",
       "input_size": [512, 512],
       "label_dict": {"background": 0, "cone": 1},
       "label_dict_reverse": {"0": "background", "1": "cone"}
+    },
+    "mb-crater_binary_seg": {
+      "num_classes": 1,
+      "task_type": "binary segmentation",
+      "input_size": [512, 512],
+      "label_dict": {"background": 0, "crater": 1},
+      "label_dict_reverse": {"0": "background", "1": "crater"}
+    },
+    "mb-mmls": {
+      "num_classes": 1,
+      "task_type": "binary segmentation",
+      "input_size": [128, 128],
+      "label_dict": {"background": 0, "landslide": 1},
+      "label_dict_reverse": {"0": "background", "1": "landslide"}
+    },
+    "mb-boulder_seg": {
+      "num_classes": 1,
+      "task_type": "binary segmentation",
+      "input_size": [500, 500],
+      "label_dict": {"background": 0, "boulder": 1},
+      "label_dict_reverse": {"0": "background", "1": "boulder"}
     }
 }

@@ -1,27 +1,20 @@
 
 import argparse
+import datetime
 import json
 import os
-import pandas as pd
-import random
-from tqdm import tqdm
 import wandb
 import warnings
 
 import torch
 from torch import nn
-import torch.nn.functional as F
-import torch.optim as optim
-from torchvision import transforms
 
 from datasets_finetune.dataset_factory import DatasetFactory
 from engine_finetune import *
 from models_finetune import create_finetune_model, create_finetune_model_vit
-from check_model_data import *
 
-from utils.losses import CombinedLoss
+from utils.losses import WeightedCombinedLoss, compute_class_weights, CombinedLoss
 import utils.lr_decay as lrd
-from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 from utils.seed import seed_everything
 from utils.transforms import create_transforms
 
@@ -39,15 +32,15 @@ def get_args_parser():
     # Dataset and paths
     argparser.add_argument("--data_dir", type=str, required=True, help="Data directory")
     argparser.add_argument("--dataset", type=str, required=True, help="Dataset name",
-                           choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr",
-                                    "mb-conequest_seg"])
+                           choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr", "mb-change_cls_ctx", "mb-change_cls_hirise"
+                                    "mb-conequest_seg", "mb-crater_binary_seg", "mb-mmls", "mb-boulder_seg"])
     argparser.add_argument("--balance_data", default="default", required=False, type=str,
                            choices=["loss_reweight", "under_sample", "over_sample"])
     argparser.add_argument("--few_shot", type=str, default=None, required=False,
                            help="Few shot dataset name", choices=["1_shot", "2_shot", "5_shot", "10_shot", "15_shot", "20_shot"])
     argparser.add_argument("--partition", type=str, default=None, required=False,
                            help="Partition dataset name",
-                           choices=["0.01_partition", "0.02_partition", "0.05_partition", "0.10_partition", "0.20_partition", "0.25_partition", "0.50_partition"])
+                           choices=["0.01x_partition", "0.02x_partition", "0.05x_partition", "0.10x_partition", "0.20x_partition", "0.25x_partition", "0.50x_partition"])
 
     # Finetuning parameters
     argparser.add_argument("--which_pretraining", type=str, default=None, required=True,
@@ -65,22 +58,21 @@ def get_args_parser():
     argparser.add_argument("--seed", type=int, default=42, required=False)
     argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
                             choices=["resnet34", "squeezenet1-1", "efficientnet-v2-m", "vit-b-16", "vit-b-32", "vit-l-16", "vit-l-32"])
+
     argparser.add_argument("--batch_size", type=int, default=256)
     argparser.add_argument("--num_epochs", type=int, default=100)
-    argparser.add_argument("--patience", type=int, default=10, required=False,
+    argparser.add_argument("--patience", type=int, default=5, required=False,
                             help="Number of epochs to wait for improvement before early stopping")
 
     argparser.add_argument("--drop_path", type=float, default=0.0, required=False)
     argparser.add_argument("--global_pool", default=True, required=False, action="store_true")
-    argparser.add_argument("--lr", type=float, default=None)
-    argparser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations')
-    argparser.add_argument('--clip_grad', type=float, default=None, metavar='NORM', help='Clip gradient norm (default: None, no clipping)')
-    argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
-    argparser.add_argument('--blr', type=float, default=1e-3, metavar='LR', help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
-    argparser.add_argument('--layer_decay', type=float, default=0.75, help='layer-wise lr decay from ELECTRA/BEiT')
+    argparser.add_argument("--lr", type=float, default=5e-3)
     argparser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0')
+    argparser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations')
+    argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
+    argparser.add_argument('--layer_decay', type=float, default=0.75, help='layer-wise lr decay from ELECTRA/BEiT')
     argparser.add_argument('--warmup_epochs', type=int, default=0, metavar='N', help='epochs to warmup LR')
-    argparser.add_argument('--max_norm', type=float, default=0.0, help='max norm for gradient clipping')
+    argparser.add_argument('--max_norm', type=float, default=1.0, help='max norm for gradient clipping')
     argparser.add_argument('--pin_mem', action='store_true', help='Pin CPU memory in DataLoader for more efficient (sometimes) transfer to GPU.')
     argparser.set_defaults(pin_mem=True)
 
@@ -128,15 +120,14 @@ def main(args):
     with open("datasets_finetune/datasets_config.json", "r") as config_file:
         all_configs = json.load(config_file)
     if args.dataset not in all_configs:
-        raise ValueError(f"Unknown dataset: {args.dataset}")
+        raise ValueError(f"Add dataset information of {args.dataset} in datasets_finetune/datasets_config.json")
     config = all_configs[args.dataset]
     config["balance"] = args.balance_data if args.balance_data is not None else "default"
 
-    ### Create transforms
-    train_transform = create_transforms(args.train_model, is_training=True)
-    val_transform = create_transforms(args.train_model, is_training=False)
+    ### Create transforms, datasets and dataloaders
+    train_transform = create_transforms(args.train_model, config["task_type"], is_training=True)
+    val_transform = create_transforms(args.train_model, config["task_type"], is_training=False)
 
-    ### Create dataset and dataloaders using the factory
     dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
     train_dataloader = dataset.get_train_dataloader()
     val_dataloader = dataset.get_val_dataloader()
@@ -150,8 +141,19 @@ def main(args):
     model = model.to(device)
 
     if args.which_pretraining != "evaluation":
-        output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run)
+        if args.few_shot:
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, args.few_shot + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        elif args.partition:
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, args.partition + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+        else:
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
         os.makedirs(output_dir, exist_ok=True)
+
+        ### Save arguments as JSON
+        args_dict = vars(args)
+        args_json_path = os.path.join(output_dir, "args.json")
+        with open(args_json_path, "w") as f:
+            json.dump(args_dict, f, indent=4)
 
         ### Create loss function based on the task type
         if "classification" in config["task_type"]:
@@ -161,50 +163,66 @@ def main(args):
             else:
                 criterion = nn.CrossEntropyLoss()
         if "segmentation" in config["task_type"]:
-            criterion = CombinedLoss(num_classes=config["num_classes"])
+            if args.balance_data == "loss_reweight":
+                class_weights = compute_class_weights(train_dataloader, config["num_classes"])
+                criterion = WeightedCombinedLoss(
+                    num_classes=config["num_classes"],
+                    class_weights=class_weights,
+                    weight_dice=0.3,
+                    weight_bce=0.7
+                )
+            else:
+                criterion = CombinedLoss(num_classes=config["num_classes"])
         criterion = criterion.to(device)
 
-        ### Create optimizer
-        if "vit" in args.train_model:
-            eff_batch_size = args.batch_size * args.accum_iter
-            if args.lr is None:
-                args.lr = args.blr * eff_batch_size / 256
-            param_groups = lrd.param_groups_lrd(model, args.weight_decay,
-                no_weight_decay_list=model.no_weight_decay(),
-                layer_decay=args.layer_decay
-            )
-            optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
-            loss_scaler = NativeScaler()
-        else:
-            optimizer = optim.AdamW(model.parameters(), lr=args.lr)
+        ### Create optimizer and scaler
+        param_groups = lrd.param_groups_lrd(model, args.weight_decay,
+            no_weight_decay_list=model.no_weight_decay(),
+            layer_decay=args.layer_decay
+        )
+        optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+        scaler = torch.cuda.amp.GradScaler()
 
+        ### Initialize wandb
         if args.wandb_enabled:
             wandb.init(
                 entity=args.wandb_entity,
                 project=args.wandb_project,
-                name=args.dataset + "_" + args.name_of_run + "_" + args.train_model,
+                name=args.dataset + "_" + args.name_of_run + "_" + args.train_model + "_" + args.few_shot,
                 config={
                     "Dataset": args.dataset,
+                    "Balance data": args.balance_data,
                     "Model": args.train_model,
                     "Training data samples": len(train_dataloader),
                     "Validation data samples": len(val_dataloader),
                     "Pre-trained Model": pretraining_configuration,
                     "Epochs": args.num_epochs,
+                    "Patience": args.patience,
                     "Batch size": args.batch_size,
                     "Optimizer": optimizer,
                     "Loss": criterion,
-                    "Model path": output_dir
+                    "Output dir": output_dir,
+                    "Learning rate": args.lr,
+                    "Min learning rate": args.min_lr,
+                    "Warmup epochs": args.warmup_epochs,
+                    "Weight decay": args.weight_decay,
+                    "Layer decay": args.layer_decay,
+                    "No of training samples": len(train_dataloader)*args.batch_size
                 }
             )
 
-
         ### Train model
         if "classification" in config["task_type"]:
-            result_csv_path = os.path.join("results", f"{args.dataset}_results_classification.csv")
+            if args.few_shot:
+                result_csv_path = os.path.join("results", f"{args.dataset}_few_shot_results.csv")
+            elif args.partition:
+                result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
+            else:
+                result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
             model = training_model_classification(
                 model, train_dataloader, val_dataloader,
                 optimizer, device,
-                output_dir, args.patience,
+                output_dir, args.patience, scaler,
                 args.name_of_run, criterion, args
             )
             eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5 = evaluate_model_classification(
@@ -216,13 +234,17 @@ def main(args):
             )
 
         if "segmentation" in config["task_type"]:
-            result_csv_path = os.path.join("results", f"{args.dataset}_results_segmentation.csv")
-            print(result_csv_path)
+            if args.few_shot:
+                result_csv_path = os.path.join("results", f"{args.dataset}_few_shot_results.csv")
+            elif args.partition:
+                result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
+            else:
+                result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
             model = training_model_segmentation(
                 model, train_dataloader, val_dataloader,
-                optimizer, device,
-                config["num_classes"], output_dir, args.patience,
-                args.name_of_run, criterion, args
+                optimizer, device, config["num_classes"],
+                output_dir, args.patience,
+                scaler, args.name_of_run, criterion, args
             )
             pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall = evaluate_model_segmentation(
                 model=model, test_dataloader=test_dataloader,
@@ -261,3 +283,4 @@ if __name__ == "__main__":
     args = args.parse_args()
     seed_everything(args.seed)
     main(args)
+    torch.cuda.empty_cache()

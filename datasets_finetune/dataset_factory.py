@@ -1,6 +1,3 @@
-# Yes, this file is being used in main_finetune.py
-# It is imported at line 17: from datasets_finetune.dataset_factory import DatasetFactory
-# And used at line 165: dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
 
 from typing import Dict, Any
 from torchvision import transforms

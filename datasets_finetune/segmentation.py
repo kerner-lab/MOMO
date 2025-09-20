@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
+import tifffile
 from typing import Dict, Any
 
 import torch
@@ -20,23 +21,40 @@ class CustomDataset(Dataset):
         self.df = df
         self.transform = transform
 
+        self.image_paths = []
+        self.masks_paths = []
+        self.filenames = []
+
+        for idx, row in df.iterrows():
+            image_path = os.path.join(data_dir, "data", row["split"], "images", row["file_id"])
+            mask_path = os.path.join(data_dir, "data", row["split"], "masks", row["file_id"])
+            self.image_paths.append(image_path)
+            self.masks_paths.append(mask_path)
+            self.filenames.append(row["file_id"])
+
     def __len__(self):
-        return len(self.df)
+        return len(self.image_paths)
 
     def __getitem__(self, idx):
-        row = self.df.iloc[idx]
-        image_path = os.path.join(self.data_dir, "data", row["split"], "images", row["file_id"])
-        label_path = os.path.join(self.data_dir, "data", row["split"], "masks", row["file_id"])
-        filename = row["file_id"]
+        image_path = self.image_paths[idx]
+        mask_path = self.masks_paths[idx]
 
-        image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-        label = cv2.imread(label_path, cv2.IMREAD_GRAYSCALE)
-        label = np.expand_dims(label, axis=0)
+        if "mmls" in self.data_dir:
+            image = tifffile.imread(image_path)[:, :, [2, 1, 0]]
+            mask = tifffile.imread(mask_path)
+        else:
+            image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
         if self.transform:
-            image = self.transform(image)
+            transformed = self.transform(image=image, mask=mask)
+            image = transformed["image"]
+            mask = transformed["mask"]
+            mask = np.expand_dims(mask, axis=0)
 
-        return image, label, filename
+        mask = mask.astype(np.float32)
+
+        return image, mask, self.filenames[idx]
 
 
 class SegmentationDataset(BaseDataset):
@@ -72,45 +90,48 @@ class SegmentationDataset(BaseDataset):
         if ("conequest" in self.data_dir) and self.use_positive_only_conequest:
             metadata_df = pd.read_csv(os.path.join(self.data_dir, "metadata.csv"))
             metadata_df = metadata_df.loc[metadata_df["Number of Cones"]!=0]
-            valid_names = metadata_df["Patch Id"]
-            train_df = train_df.merge(valid_names, on="Patch Id")
-            val_df = val_df.merge(valid_names, on="Patch Id")
-            test_df = test_df.merge(valid_names, on="Patch Id")
+            valid_names = metadata_df[["Patch Id"]].rename(columns={"Patch Id": "file_id"})
+            train_df = train_df.merge(valid_names, on="file_id")
+            val_df = val_df.merge(valid_names, on="file_id")
+            test_df = test_df.merge(valid_names, on="file_id")
 
         return train_df, val_df, test_df
 
-    def _create_dataset(self, data_dir: str, df: pd.DataFrame, is_training: bool) -> Dataset:
-        return CustomDataset(data_dir, df, self.train_transform if is_training else self.val_transform)
+    def _create_dataset(self, df: pd.DataFrame, is_training: bool) -> Dataset:
+        return CustomDataset(self.data_dir, df, self.train_transform if is_training else self.val_transform)
 
     def get_train_dataloader(self) -> DataLoader:
-        train_dataset = self._create_dataset(self.data_dir, self.train_df, is_training=True)
-        if "vit" in self.train_model:
-            sampler_train = torch.utils.data.RandomSampler(train_dataset)
-            train_dataloader = torch.utils.data.DataLoader(
-                train_dataset, sampler=sampler_train,
-                batch_size=self.batch_size,
-                pin_memory=self.pin_mem,
-                drop_last=True,
-            )
-        else:
-            train_dataloader = DataLoader(train_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        train_dataset = self._create_dataset(self.train_df, is_training=True)
+        sampler_train = torch.utils.data.RandomSampler(train_dataset)
+        train_dataloader = DataLoader(
+            train_dataset, sampler=sampler_train,
+            batch_size=self.batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem
+        )
         return train_dataloader
 
     def get_val_dataloader(self) -> DataLoader:
-        val_dataset = self._create_dataset(self.data_dir, self.val_df, is_training=False)
-        if "vit" in self.train_model:
-            sampler_val = torch.utils.data.SequentialSampler(val_dataset)
-            val_dataloader = torch.utils.data.DataLoader(
-                val_dataset, sampler=sampler_val,
-                batch_size=self.batch_size,
-                pin_memory=self.pin_mem,
-                drop_last=True,
-            )
-        else:
-            val_dataloader = DataLoader(val_dataset, batch_size=self.batch_size, shuffle=True, drop_last=True)
+        val_dataset = self._create_dataset(self.val_df, is_training=False)
+        sampler_val = torch.utils.data.SequentialSampler(val_dataset)
+        val_dataloader = DataLoader(
+            val_dataset, sampler=sampler_val,
+            batch_size=self.batch_size,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem
+        )
         return val_dataloader
 
     def get_test_dataloader(self) -> DataLoader:
-        test_dataset = self._create_dataset(self.data_dir, self.test_df, is_training=False)
-        return DataLoader(test_dataset, batch_size=1, shuffle=False)
-
+        test_dataset = self._create_dataset(self.test_df, is_training=False)
+        test_dataloader = DataLoader(
+            test_dataset,
+            batch_size=1,
+            shuffle=False,
+            num_workers=8,
+            persistent_workers=True,
+            pin_memory=self.pin_mem
+        )
+        return test_dataloader

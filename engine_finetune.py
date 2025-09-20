@@ -10,6 +10,7 @@ from sklearn.metrics import (
     precision_score, recall_score
 )
 import sys
+import time
 from timm.utils import accuracy
 from tqdm import tqdm
 from typing import Iterable
@@ -26,9 +27,11 @@ import utils.misc as misc
 
 ''' Classification '''
 
-def save_results(output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx):
+def save_results(
+    output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx,
+    result_csv_path, args, pretraining_configuration, balance_data, no_of_samples):
 
-    file1 = open(os.path.join(output_dir, "results.txt"), "a")
+    file1 = open(os.path.join(output_dir, "results.txt"), "w")
     file1.write(name_of_run)
     file1.write("\n")
     file1.write("-"*60)
@@ -63,11 +66,39 @@ def save_results(output_dir, name_of_run, eval_accuracy, eval_precision, eval_re
     file1.write("\n")
     file1.close()
 
+    if os.path.exists(result_csv_path):
+        result_df = pd.read_csv(result_csv_path)
+    else:
+        result_df = pd.DataFrame(columns=[
+            "Downstream Task", "Training type",
+            "Train Model", "Pre-training configuration",
+            "balance_data", "no_of_training_samples",
+            "Accuracy", "Precision", "Recall", "F1-Score",
+            "Top-1 Accuracy", "Top-5 Accuracy",
+            "batch_size", "num_epochs", "patience",
+            "drop_path", "global_pool", "lr",
+            "min_lr", "weight_decay", "layer_decay",
+            "warmup_epochs", "max_norm", "accum_iter",
+        ])
+    current_result = [
+        args.dataset, args.which_pretraining,
+        args.train_model, pretraining_configuration, balance_data, no_of_samples,
+        round(eval_accuracy, 4), round(eval_precision, 4),
+        round(eval_recall, 4), round(eval_f1score, 4),
+        round(eval_acc1, 4), round(eval_acc5, 4),
+        args.batch_size, args.num_epochs, args.patience,
+        args.drop_path, args.global_pool, args.lr,
+        args.min_lr, args.weight_decay, args.layer_decay,
+        args.warmup_epochs, args.max_norm, args.accum_iter,
+    ]
+    result_df.loc[len(result_df)] = current_result
+    result_df.to_csv(result_csv_path, index=False)
+
 
 def training_model_classification(model: torch.nn.Module,
                 train_dataloader: Iterable, val_dataloader: Iterable,
                 optimizer: torch.optim.Optimizer, device: torch.device,
-                output_dir: str, patience: int,
+                output_dir: str, patience: int, scaler: torch.cuda.amp.GradScaler,
                 name_of_run: str, criterion, args):
 
     best_val_loss = float('inf')
@@ -75,20 +106,28 @@ def training_model_classification(model: torch.nn.Module,
 
     for epoch in tqdm(range(args.num_epochs), desc=name_of_run):
 
+        # Adjust learning rate
+        current_lr = lr_sched.adjust_learning_rate(optimizer, epoch, args)
+
         # Training loop
         model.train()
         train_loss = 0.0
 
         for inputs, targets, _ in tqdm(train_dataloader, desc=f"Epoch [{epoch+1}/{args.num_epochs}] Training"):
-            inputs = Variable(inputs.type(torch.FloatTensor)).to(device)
-            targets = Variable(targets.type(torch.LongTensor)).to(device)
+            inputs = inputs.to(device, non_blocking=True)
+            targets = targets.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            outputs = model(inputs)
-            targets = targets.squeeze()
-            loss = criterion(outputs, targets)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                outputs = model(inputs)
+                targets = targets.squeeze()
+                loss = criterion(outputs, targets)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.max_norm)
+            scaler.step(optimizer)
+            scaler.update()
 
             train_loss += loss.item()
 
@@ -96,33 +135,37 @@ def training_model_classification(model: torch.nn.Module,
 
         # Validation loop
         model.eval()
-        val_loss, ground_truth, prediction = 0.0, [], []
+        val_loss, all_targets, all_predictions = 0.0, [], []
 
         with torch.no_grad():
             for inputs, targets, _ in tqdm(val_dataloader, desc=f"Epoch [{epoch+1}/{args.num_epochs}] Validation"):
-                inputs = Variable(inputs.type(torch.FloatTensor)).to(device)
-                targets = Variable(targets.type(torch.LongTensor)).to(device)
+                inputs = inputs.to(device, non_blocking=True)
+                targets = targets.to(device, non_blocking=True)
 
-                outputs = model(inputs)
-                targets = targets.squeeze()
-                loss = criterion(outputs, targets)
+                with torch.cuda.amp.autocast():
+                    outputs = model(inputs)
+                    targets = targets.squeeze()
+                    loss = criterion(outputs, targets)
                 val_loss += loss.item()
 
-                output = torch.nn.functional.softmax(outputs, dim=1)
-                predictions = torch.argmax(output, dim=1).cpu().numpy()
-                prediction.extend(predictions)
-                targets_cpu = targets.cpu().numpy()
-                ground_truth.extend(targets_cpu)
+                outputs = torch.nn.functional.softmax(outputs, dim=1)
+                predictions = torch.argmax(outputs, dim=1)
+                all_predictions.append(predictions.cpu())
+                all_targets.append(targets.cpu())
 
         val_loss /= len(val_dataloader)
-        val_accuracy = accuracy_score(ground_truth, prediction)
-        val_f1 = f1_score(ground_truth, prediction, average="weighted")
+        all_predictions = torch.cat(all_predictions).numpy()
+        all_targets = torch.cat(all_targets).numpy()
+
+        val_accuracy = accuracy_score(all_targets, all_predictions)
+        val_f1 = f1_score(all_targets, all_predictions, average="weighted")
 
         # Print logs and update wandb
-        print(f"\nEpoch [{epoch+1}/{args.num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1Score: {val_f1:.4f}\n\n")
+        print(f"\nEpoch [{epoch+1}/{args.num_epochs}], Learning Rate: {current_lr:.6f}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val Accuracy: {val_accuracy:.4f}, Val F1Score: {val_f1:.4f}\n\n")
         if args.wandb_enabled:
             wandb.log({
                 "epoch": epoch + 1,
+                "learning_rate": current_lr,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "val_accuracy": val_accuracy,
@@ -133,20 +176,15 @@ def training_model_classification(model: torch.nn.Module,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            if "vit" in args.train_model:
-                misc.save_model(args, output_dir, "checkpoint-best", model)
-            else:
-                torch.save(model.state_dict(), os.path.join(output_dir, f"checkpoint-best.pth"))
+            misc.save_model(args, output_dir, "checkpoint-best", model)
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
 
     # Save the last checkpoint
-    if "vit" in args.train_model:
-        misc.save_model(args, output_dir, "checkpoint-last", model)
-    else:
-        torch.save(model.state_dict(), os.path.join(output_dir, f"checkpoint-last.pth"))
+    misc.save_model(args, output_dir, "checkpoint-last", model)
 
     return model
 
@@ -221,28 +259,8 @@ def evaluate_model_classification(
     print("-"*60)
 
     ### Save results
-    save_results(output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx)
-
-    if os.path.exists(result_csv_path):
-        result_df = pd.read_csv(result_csv_path)
-    else:
-        result_df = pd.DataFrame(columns=[
-            "Downstream Task", "Training type",
-            "Train Model", "Pre-training configuration",
-            "balance_data", "no_of_training_samples",
-            "Accuracy", "Precision",
-            "Recall", "F1-Score",
-            "Top-1 Accuracy", "Top-5 Accuracy"
-        ])
-    current_result = [
-        args.dataset, args.which_pretraining,
-        args.train_model, pretraining_configuration, balance_data, no_of_samples,
-        round(eval_accuracy, 4), round(eval_precision, 4),
-        round(eval_recall, 4), round(eval_f1score, 4),
-        round(eval_acc1, 4), round(eval_acc5, 4)
-    ]
-    result_df.loc[len(result_df)] = current_result
-    result_df.to_csv(result_csv_path, index=False)
+    save_results(output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx,
+                 result_csv_path, args, pretraining_configuration, balance_data, no_of_samples)
 
     return eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5
 
@@ -253,28 +271,33 @@ def training_model_segmentation(model: torch.nn.Module,
                 train_dataloader: Iterable, val_dataloader: Iterable,
                 optimizer: torch.optim.Optimizer, device: torch.device,
                 num_classes: int, output_dir: str, patience: int,
-                name_of_run: str, criterion, args):
+                scaler: torch.cuda.amp.GradScaler, name_of_run: str, criterion, args):
 
     best_val_loss = float('inf')
     patience_counter = 0
 
     for epoch in tqdm(range(args.num_epochs), desc=name_of_run):
 
+        # Adjust learning rate
+        current_lr = lr_sched.adjust_learning_rate(optimizer, epoch, args)
+
         # Training loop
         model.train()
         train_loss = 0.0
         for inputs, labels, _ in tqdm(train_dataloader, desc=f"Epoch [{epoch+1}/{args.num_epochs}] Training"):
-            inputs = Variable(inputs.type(torch.FloatTensor)).to(device)
-            if num_classes == 1:
-                labels = Variable(labels.type(torch.FloatTensor)).to(device)
-            else:
-                labels = Variable(labels.type(torch.LongTensor)).to(device)
+            inputs = inputs.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
             optimizer.zero_grad()
-            outputs = model(inputs)
-            loss = criterion(outputs, labels)
-            loss.backward()
-            optimizer.step()
+            with torch.cuda.amp.autocast():
+                outputs = model(inputs)
+                loss = criterion(outputs, labels)
+
+            scaler.scale(loss).backward()
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=args.max_norm)
+            scaler.step(optimizer)
+            scaler.update()
 
             train_loss += loss.item()
 
@@ -286,15 +309,13 @@ def training_model_segmentation(model: torch.nn.Module,
 
         with torch.no_grad():
             for inputs, labels, _ in tqdm(val_dataloader, desc=f"Epoch [{epoch+1}/{args.num_epochs}] Validation"):
-                inputs = Variable(inputs.type(torch.FloatTensor)).to(device)
-                if num_classes == 1:
-                    labels = Variable(labels.type(torch.FloatTensor)).to(device)
-                else:
-                    labels = Variable(labels.type(torch.LongTensor)).to(device)
+                inputs = inputs.to(device, non_blocking=True)
+                labels = labels.to(device, non_blocking=True)
 
-                outputs = model(inputs)
+                with torch.cuda.amp.autocast():
+                    outputs = model(inputs)
+                    loss = criterion(outputs, labels)
 
-                loss = criterion(outputs, labels)
                 val_loss += loss.item()
 
                 if num_classes == 1:
@@ -303,6 +324,7 @@ def training_model_segmentation(model: torch.nn.Module,
                 else:
                     posterior = torch.softmax(outputs, dim=1)
                     prediction = torch.argmax(posterior)
+
                 tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
                 val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item()
 
@@ -310,10 +332,11 @@ def training_model_segmentation(model: torch.nn.Module,
         val_iou /= len(val_dataloader)
 
         # Print logs and update wandb
-        print(f"Epoch [{epoch+1}/{args.num_epochs}], Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val IoU: {val_iou:.4f}")
+        print(f"\nEpoch [{epoch+1}/{args.num_epochs}], Learning Rate: {current_lr:.6f}, Train Loss: {train_loss:.4f}, Val Loss: {val_loss:.4f}, Val IoU: {val_iou:.4f}\n\n")
         if args.wandb_enabled:
             wandb.log({
                 "epoch": epoch + 1,
+                "learning_rate": current_lr,
                 "train_loss": train_loss,
                 "val_loss": val_loss,
                 "val_iou": val_iou
@@ -323,20 +346,15 @@ def training_model_segmentation(model: torch.nn.Module,
         if val_loss < best_val_loss:
             best_val_loss = val_loss
             patience_counter = 0
-            if "vit" in args.train_model:
-                misc.save_model(args, output_dir, "checkpoint-best", model)
-            else:
-                torch.save(model.state_dict(), os.path.join(output_dir, f"checkpoint-best.pth"))
+            misc.save_model(args, output_dir, "checkpoint-best", model)
         else:
             patience_counter += 1
             if patience_counter >= patience:
                 print(f"Early stopping triggered after {epoch + 1} epochs")
+                break
 
     # Save the last checkpoint
-    if "vit" in args.train_model:
-        misc.save_model(args, output_dir, "checkpoint-last", model)
-    else:
-        torch.save(model.state_dict(), os.path.join(output_dir, f"checkpoint-last.pth"))
+    misc.save_model(args, output_dir, "checkpoint-last", model)
 
     return model
 
@@ -359,11 +377,8 @@ def evaluate_model_segmentation(
 
         for _, (inputs, labels, filename) in enumerate(tqdm(test_dataloader)):
 
-            inputs = Variable(inputs.type(torch.FloatTensor)).to(device)
-            if config["num_classes"] == 1:
-                labels = Variable(labels.type(torch.FloatTensor)).to(device)
-            else:
-                labels = Variable(labels.type(torch.LongTensor)).to(device)
+            inputs = inputs.to(device, non_blocking=True)
+            labels = labels.to(device, non_blocking=True)
 
             outputs = model(inputs)
 
@@ -423,13 +438,21 @@ def evaluate_model_segmentation(
             "Train Model", "Pre-training configuration",
             "Pixel IoU", "Pixel Accuracy",
             "Pixel Precision", "Pixel Recall",
-            "Pixel Dice", "Object Precision", "Object Recall"
+            "Pixel Dice", "Object Precision", "Object Recall",
+            "batch_size", "num_epochs", "patience",
+            "drop_path", "global_pool", "lr",
+            "min_lr", "weight_decay", "layer_decay",
+            "warmup_epochs", "max_norm", "accum_iter",
         ])
     current_result = [
         args.dataset, args.which_pretraining,
         args.train_model, pretraining_configuration,
         pixel_iou, pixel_accuracy, pixel_precision, pixel_recall,
-        pixel_dice, object_precision, object_recall
+        pixel_dice, object_precision, object_recall,
+        args.batch_size, args.num_epochs, args.patience,
+        args.drop_path, args.global_pool, args.lr,
+        args.min_lr, args.weight_decay, args.layer_decay,
+        args.warmup_epochs, args.max_norm, args.accum_iter,
     ]
     result_df.loc[len(result_df)] = current_result
     result_df.to_csv(result_csv_path, index=False)
