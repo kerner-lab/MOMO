@@ -110,7 +110,7 @@ class SegmentationDataset(BaseDataset):
             persistent_workers=True,
             pin_memory=self.pin_mem
         )
-        return train_dataloader
+        return train_dataloader, self.train_df.shape[0]
 
     def get_val_dataloader(self) -> DataLoader:
         val_dataset = self._create_dataset(self.val_df, is_training=False)

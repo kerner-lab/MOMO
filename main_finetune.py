@@ -32,7 +32,7 @@ def get_args_parser():
     # Dataset and paths
     argparser.add_argument("--data_dir", type=str, required=True, help="Data directory")
     argparser.add_argument("--dataset", type=str, required=True, help="Dataset name",
-                           choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr", "mb-change_cls_ctx", "mb-change_cls_hirise"
+                           choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr", "mb-change_cls_ctx", "mb-change_cls_hirise",
                                     "mb-conequest_seg", "mb-crater_binary_seg", "mb-mmls", "mb-boulder_seg"])
     argparser.add_argument("--balance_data", default="default", required=False, type=str,
                            choices=["loss_reweight", "under_sample", "over_sample"])
@@ -51,7 +51,7 @@ def get_args_parser():
     # Paths
     argparser.add_argument("--output_dir", type=str, default=None, required=False,
                            help="path where to save")
-    argparser.add_argument("--metrics_dir", type=str, default="metrics", required=False,
+    argparser.add_argument("--metrics_dir", type=str, default="", required=False,
                             help="path where to save metrics")
 
     # Model and hyperparameters
@@ -129,7 +129,7 @@ def main(args):
     val_transform = create_transforms(args.train_model, config["task_type"], is_training=False)
 
     dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
-    train_dataloader = dataset.get_train_dataloader()
+    train_dataloader, no_of_samples = dataset.get_train_dataloader()
     val_dataloader = dataset.get_val_dataloader()
     test_dataloader = dataset.get_test_dataloader()
 
@@ -141,13 +141,24 @@ def main(args):
     model = model.to(device)
 
     if args.which_pretraining != "evaluation":
+        ### Create output and metrics directories
         if args.few_shot:
-            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, args.few_shot + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+            current_output_folder = args.few_shot + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            metrics_dir = os.path.join(args.output_dir, "metrics", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            args.data_configuration = args.few_shot
         elif args.partition:
-            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, args.partition + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+            current_output_folder = args.partition + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            metrics_dir = os.path.join(args.output_dir, "metrics", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            args.data_configuration = args.partition
         else:
-            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S"))
+            current_output_folder = datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+            output_dir = os.path.join(args.output_dir, "finetune", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            metrics_dir = os.path.join(args.output_dir, "metrics", args.train_model, args.dataset, args.name_of_run, current_output_folder)
+            args.data_configuration = "full"
         os.makedirs(output_dir, exist_ok=True)
+        os.makedirs(metrics_dir, exist_ok=True)
 
         ### Save arguments as JSON
         args_dict = vars(args)
@@ -213,39 +224,47 @@ def main(args):
                     "Warmup epochs": args.warmup_epochs,
                     "Weight decay": args.weight_decay,
                     "Layer decay": args.layer_decay,
-                    "No of training samples": len(train_dataloader)*args.batch_size
+                    "No of training samples": no_of_samples
                 }
             )
 
-        ### Train model
+        ### Train classification model
         if "classification" in config["task_type"]:
-            if args.few_shot:
-                result_csv_path = os.path.join("results", f"{args.dataset}_few_shot_results.csv")
-            elif args.partition:
-                result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
-            else:
-                result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
             model = training_model_classification(
                 model, train_dataloader, val_dataloader,
                 optimizer, device,
                 output_dir, args.patience, scaler,
                 args.name_of_run, criterion, args
             )
-            eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5 = evaluate_model_classification(
-                model, test_dataloader,
-                device, result_csv_path,
-                args.balance_data, config,
-                pretraining_configuration, output_dir, args.name_of_run,
-                len(train_dataloader)*args.batch_size, args
-            )
+            eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5 = evaluate_model_classification(model, test_dataloader, device, config, args.name_of_run, metrics_dir)
 
-        if "segmentation" in config["task_type"]:
+            ### Save classification results
             if args.few_shot:
                 result_csv_path = os.path.join("results", f"{args.dataset}_few_shot_results.csv")
             elif args.partition:
                 result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
             else:
                 result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
+            if os.path.exists(result_csv_path):
+                result_df = pd.read_csv(result_csv_path)
+            else:
+                result_df = pd.DataFrame(columns=[
+                    "Downstream Task", "Training type", "Train Model", "Pre-training configuration", "balance_data", "data_configuration", "no_of_training_samples",
+                    "Accuracy", "Precision", "Recall", "F1-Score", "Top-1 Accuracy", "Top-5 Accuracy", "batch_size", "num_epochs", "patience",
+                    "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay", "warmup_epochs", "max_norm", "accum_iter", "output_folder"
+                ])
+            current_result = [
+                args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+                round(eval_accuracy, 4), round(eval_precision, 4), round(eval_recall, 4), round(eval_f1score, 4),
+                round(eval_acc1, 4), round(eval_acc5, 4), args.batch_size, args.num_epochs, args.patience,
+                args.drop_path, args.global_pool, args.lr, args.min_lr, args.weight_decay, args.layer_decay,
+                args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
+            ]
+            result_df.loc[len(result_df)] = current_result
+            result_df.to_csv(result_csv_path, index=False)
+
+        ### Train segmentation model
+        if "segmentation" in config["task_type"]:
             model = training_model_segmentation(
                 model, train_dataloader, val_dataloader,
                 optimizer, device, config["num_classes"],
@@ -258,6 +277,31 @@ def main(args):
                 result_csv_path=result_csv_path, config=config,
                 pretraining_configuration=pretraining_configuration, args=args
             )
+
+            ### Save segmentation results
+            if args.few_shot:
+                result_csv_path = os.path.join("results", f"{args.dataset}_few_shot_results.csv")
+            elif args.partition:
+                result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
+            else:
+                result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
+            if os.path.exists(result_csv_path):
+                result_df = pd.read_csv(result_csv_path)
+            else:
+                result_df = pd.DataFrame(columns=[
+                    "Downstream Task", "Training type", "Train Model", "Pre-training configuration", "balance_data", "data_configuration", "no_of_training_samples",
+                    "Pixel IoU", "Pixel Accuracy", "Pixel Precision", "Pixel Recall", "Pixel Dice", "Object Precision", "Object Recall",
+                    "batch_size", "num_epochs", "patience", "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay",
+                    "warmup_epochs", "max_norm", "accum_iter", "output_folder"
+                ])
+            current_result = [
+                args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+                pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall,
+                args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.lr, args.min_lr,
+                args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
+            ]
+            result_df.loc[len(result_df)] = current_result
+            result_df.to_csv(result_csv_path, index=False)
 
     ### Evaluate model
     else:

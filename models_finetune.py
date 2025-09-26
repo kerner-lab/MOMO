@@ -85,6 +85,78 @@ class Segmentation(nn.Module):
         return x
 
 
+# class Segmentation_ViT(nn.Module):
+
+#     def __init__(self, encoder, encoder_output_dim):
+#         super(Segmentation_ViT, self).__init__()
+#         self.encoder = encoder
+
+#         # Encoder output dimensions
+#         self.encoder_output_dim = encoder_output_dim
+
+#         # Decoder dimensions
+#         decoder_base_channels = 256
+#         self.decoder_base_channels = decoder_base_channels
+#         num_output_classes = 1
+
+#         # Spatial dimensions for reconstruction
+#         # Feature map width/height after linear projection
+#         # Logic: feature_map_size = desired_output_size / total_upsampling_factor
+#         # For 512x512 output with 4 upsampling layers (2^4 = 16x), use 32x32
+#         feature_map_size = 32
+#         self.feature_map_size = feature_map_size
+
+#         # Linear projection from encoder output to spatial feature maps
+#         projected_feature_dim = feature_map_size * feature_map_size * decoder_base_channels
+#         self.encoder_to_spatial = nn.Linear(encoder_output_dim, projected_feature_dim)
+
+#         # Decoder: Progressive upsampling with channel reduction
+#         self.decoder = nn.Sequential(
+#             # Stage 1: 32x32 -> 64x64, channels: 256 -> 128
+#             nn.ConvTranspose2d(
+#                 in_channels=decoder_base_channels, out_channels=decoder_base_channels // 2, 
+#                 kernel_size=3, stride=2, padding=1, output_padding=1
+#             ),
+#             nn.BatchNorm2d(decoder_base_channels // 2),
+#             nn.ReLU(inplace=True),
+
+#             # Stage 2: 64x64 -> 128x128, channels: 128 -> 64
+#             nn.ConvTranspose2d(
+#                 in_channels=decoder_base_channels // 2, out_channels=decoder_base_channels // 4, 
+#                 kernel_size=3, stride=2, padding=1, output_padding=1
+#             ),
+#             nn.BatchNorm2d(decoder_base_channels // 4),
+#             nn.ReLU(inplace=True),
+
+#             # Stage 3: 128x128 -> 256x256, channels: 64 -> 32
+#             nn.ConvTranspose2d(
+#                 in_channels=decoder_base_channels // 4, out_channels=decoder_base_channels // 8, 
+#                 kernel_size=3, stride=2, padding=1, output_padding=1
+#             ),
+#             nn.BatchNorm2d(decoder_base_channels // 8),
+#             nn.ReLU(inplace=True),
+
+#             # Stage 4: 256x256 -> 512x512, channels: 32 -> num_classes
+#             nn.ConvTranspose2d(
+#                 in_channels=decoder_base_channels // 8, out_channels=num_output_classes, 
+#                 kernel_size=3, stride=2, padding=1, output_padding=1
+#             )
+#         )
+
+#     @property
+#     def blocks(self):
+#         return self.encoder.blocks
+
+#     def no_weight_decay(self):
+#         return self.encoder.no_weight_decay()
+
+#     def forward(self, x):
+#         features = self.encoder(x)
+#         features = self.encoder_to_spatial(features)
+#         features = features.reshape((-1, self.decoder_base_channels, self.feature_map_size, self.feature_map_size))
+#         x = self.decoder(features)
+#         return x
+
 class Segmentation_ViT(nn.Module):
 
     def __init__(self, encoder, encoder_output_dim):
@@ -192,11 +264,6 @@ class Segmentation_ViT(nn.Module):
         
         # Final classification layer
         output = self.final_conv(features)
-        
-        # If the output size doesn't exactly match input size, interpolate
-        # if output.shape[-1] != input_size:
-        #     output = F.interpolate(output, size=(input_size, input_size), 
-        #                          mode='bilinear', align_corners=False)
 
         return output
 
@@ -285,7 +352,7 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
     else:
         checkpoint = torch.load(pretrained_path, map_location='cpu')
 
-        print("Load pre-trained checkpoint from: %s" % pretrained_path)
+        print("\nLoad pre-trained checkpoint from: %s" % pretrained_path)
         checkpoint_model = checkpoint['model']
         state_dict = model.state_dict()
         for k in ['head.weight', 'head.bias']:

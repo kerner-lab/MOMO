@@ -27,11 +27,9 @@ import utils.misc as misc
 
 ''' Classification '''
 
-def save_results(
-    output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx,
-    result_csv_path, args, pretraining_configuration, balance_data, no_of_samples):
+def save_results(metrics_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx):
 
-    file1 = open(os.path.join(output_dir, "results.txt"), "w")
+    file1 = open(os.path.join(metrics_dir, "results.txt"), "w")
     file1.write(name_of_run)
     file1.write("\n")
     file1.write("-"*60)
@@ -65,34 +63,6 @@ def save_results(
     file1.write("-"*60)
     file1.write("\n")
     file1.close()
-
-    if os.path.exists(result_csv_path):
-        result_df = pd.read_csv(result_csv_path)
-    else:
-        result_df = pd.DataFrame(columns=[
-            "Downstream Task", "Training type",
-            "Train Model", "Pre-training configuration",
-            "balance_data", "no_of_training_samples",
-            "Accuracy", "Precision", "Recall", "F1-Score",
-            "Top-1 Accuracy", "Top-5 Accuracy",
-            "batch_size", "num_epochs", "patience",
-            "drop_path", "global_pool", "lr",
-            "min_lr", "weight_decay", "layer_decay",
-            "warmup_epochs", "max_norm", "accum_iter",
-        ])
-    current_result = [
-        args.dataset, args.which_pretraining,
-        args.train_model, pretraining_configuration, balance_data, no_of_samples,
-        round(eval_accuracy, 4), round(eval_precision, 4),
-        round(eval_recall, 4), round(eval_f1score, 4),
-        round(eval_acc1, 4), round(eval_acc5, 4),
-        args.batch_size, args.num_epochs, args.patience,
-        args.drop_path, args.global_pool, args.lr,
-        args.min_lr, args.weight_decay, args.layer_decay,
-        args.warmup_epochs, args.max_norm, args.accum_iter,
-    ]
-    result_df.loc[len(result_df)] = current_result
-    result_df.to_csv(result_csv_path, index=False)
 
 
 def training_model_classification(model: torch.nn.Module,
@@ -192,9 +162,8 @@ def training_model_classification(model: torch.nn.Module,
 @torch.no_grad()
 def evaluate_model_classification(
     model: torch.nn.Module, test_dataloader: Iterable,
-    device: torch.device, result_csv_path: str, balance_data: str,
-    config: dict, pretraining_configuration: str, output_dir: str,
-    name_of_run: str, no_of_samples: int, args):
+    device: torch.device, config: dict, 
+    name_of_run: str, metrics_dir):
 
     model.to(device)
     model.eval()
@@ -202,7 +171,7 @@ def evaluate_model_classification(
     with torch.no_grad():
 
         output_list, target_list, ground_truth, prediction = [], [], [], []
-        for data_iter_step, (samples, targets, _) in enumerate(test_dataloader):
+        for _, (samples, targets, _) in enumerate(test_dataloader):
             samples = samples.to(device, non_blocking=True)
             targets = targets.to(device, non_blocking=True)
 
@@ -259,8 +228,7 @@ def evaluate_model_classification(
     print("-"*60)
 
     ### Save results
-    save_results(output_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx,
-                 result_csv_path, args, pretraining_configuration, balance_data, no_of_samples)
+    save_results(metrics_dir, name_of_run, eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5, cls_report, cmtx)
 
     return eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5
 
@@ -363,8 +331,7 @@ def training_model_segmentation(model: torch.nn.Module,
 def evaluate_model_segmentation(
     model: torch.nn.Module, test_dataloader: Iterable,
     device: torch.device, output_dir: str,
-    result_csv_path: str, config: dict,
-    pretraining_configuration: str, args):
+    config: dict, args):
 
     model.to(device)
     model.eval()
@@ -428,33 +395,5 @@ def evaluate_model_segmentation(
     print("Pixel Dice", pixel_dice)
     print("Object Precision:", object_precision)
     print("Object Recall:", object_recall)
-
-    ### Save results
-    if os.path.exists(result_csv_path):
-        result_df = pd.read_csv(result_csv_path)
-    else:
-        result_df = pd.DataFrame(columns=[
-            "Downstream Task", "Training type",
-            "Train Model", "Pre-training configuration",
-            "Pixel IoU", "Pixel Accuracy",
-            "Pixel Precision", "Pixel Recall",
-            "Pixel Dice", "Object Precision", "Object Recall",
-            "batch_size", "num_epochs", "patience",
-            "drop_path", "global_pool", "lr",
-            "min_lr", "weight_decay", "layer_decay",
-            "warmup_epochs", "max_norm", "accum_iter",
-        ])
-    current_result = [
-        args.dataset, args.which_pretraining,
-        args.train_model, pretraining_configuration,
-        pixel_iou, pixel_accuracy, pixel_precision, pixel_recall,
-        pixel_dice, object_precision, object_recall,
-        args.batch_size, args.num_epochs, args.patience,
-        args.drop_path, args.global_pool, args.lr,
-        args.min_lr, args.weight_decay, args.layer_decay,
-        args.warmup_epochs, args.max_norm, args.accum_iter,
-    ]
-    result_df.loc[len(result_df)] = current_result
-    result_df.to_csv(result_csv_path, index=False)
 
     return pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall

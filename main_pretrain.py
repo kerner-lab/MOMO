@@ -65,7 +65,6 @@ def get_args_parser():
     argparser.add_argument("--num_epochs", type=int, default=500, required=False)
     argparser.add_argument("--batch_size", type=int, default=256, required=False)
     argparser.add_argument("--num_workers", type=int, default=4, required=False)
-    argparser.add_argument("--use_grayscale", default=False, required=False, action="store_true")
     argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
     argparser.add_argument('--learning_rate', type=float, default=None, metavar='LR', help='learning rate (absolute lr)')
     argparser.add_argument('--blr', type=float, default=1e-3, metavar='LR', help='base learning rate: absolute_lr = base_lr * total_batch_size / 256')
@@ -132,7 +131,6 @@ def main(args):
             args.val_split,
             args.train_model,
             args.if_pretrained,
-            args.use_grayscale,
             args.batch_size,
             args.num_workers,
             args.pin_mem
@@ -144,7 +142,6 @@ def main(args):
             model_unit="autoencoder",
             device=device,
             if_pretrained=args.if_pretrained,
-            use_grayscale=args.use_grayscale
         )
 
         ### Initialize optimizer and loss scaler
@@ -216,7 +213,6 @@ def main(args):
             args.val_split,
             args.train_model,
             args.if_pretrained,
-            args.use_grayscale,
             args.batch_size,
             args.num_workers,
             args.pin_mem
