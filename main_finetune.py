@@ -3,6 +3,7 @@ import argparse
 import datetime
 import json
 import os
+import random
 import wandb
 import warnings
 
@@ -274,8 +275,7 @@ def main(args):
             pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall = evaluate_model_segmentation(
                 model=model, test_dataloader=test_dataloader,
                 device=device, output_dir=output_dir,
-                result_csv_path=result_csv_path, config=config,
-                pretraining_configuration=pretraining_configuration, args=args
+                config=config, args=args
             )
 
             ### Save segmentation results
@@ -331,6 +331,7 @@ def main(args):
 if __name__ == "__main__":
     args = get_args_parser()
     args = args.parse_args()
+    args.seed = random.randint(0, 2**32 - 1)
     seed_everything(args.seed)
     main(args)
     torch.cuda.empty_cache()
