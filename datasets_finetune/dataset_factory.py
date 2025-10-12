@@ -1,3 +1,6 @@
+# Yes, this file is being used in main_finetune.py
+# It is imported at line 17: from datasets_finetune.dataset_factory import DatasetFactory
+# And used at line 165: dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
 
 from typing import Dict, Any
 from torchvision import transforms
@@ -8,7 +11,7 @@ from .segmentation import SegmentationDataset
 
 class DatasetFactory:
     @staticmethod
-    def create_dataset(dataset_name: str, config: Dict[str, Any], train_transform: transforms.Compose, val_transform: transforms.Compose, args) -> BaseDataset:
+    def create_dataset(config: Dict[str, Any], train_transform: transforms.Compose, val_transform: transforms.Compose, args) -> BaseDataset:
         # Get task type from config to determine which dataset class to use
         task_type = config.get("task_type", "").lower()
         

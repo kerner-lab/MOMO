@@ -30,6 +30,10 @@ def get_args_parser():
 
     argparser = argparse.ArgumentParser(description="Fine-tuning script for all types of tasks")
 
+    # Seed
+    argparser.add_argument("--random_seed_per_run", default=False, required=False, action="store_true",
+                            help="True value of this parameter assumes that you want to use a random seed for each run")
+
     # Dataset and paths
     argparser.add_argument("--data_dir", type=str, required=True, help="Data directory")
     argparser.add_argument("--dataset", type=str, required=True, help="Dataset name",
@@ -56,7 +60,6 @@ def get_args_parser():
                             help="path where to save metrics")
 
     # Model and hyperparameters
-    argparser.add_argument("--seed", type=int, default=42, required=False)
     argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
                             choices=["resnet34", "squeezenet1-1", "efficientnet-v2-m", "vit-b-16", "vit-b-32", "vit-l-16", "vit-l-32"])
 
@@ -67,7 +70,7 @@ def get_args_parser():
 
     argparser.add_argument("--drop_path", type=float, default=0.0, required=False)
     argparser.add_argument("--global_pool", default=True, required=False, action="store_true")
-    argparser.add_argument("--lr", type=float, default=5e-3)
+    argparser.add_argument("--learning_rate", type=float, default=1e-3)
     argparser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0')
     argparser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations')
     argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
@@ -129,7 +132,7 @@ def main(args):
     train_transform = create_transforms(args.train_model, config["task_type"], is_training=True)
     val_transform = create_transforms(args.train_model, config["task_type"], is_training=False)
 
-    dataset = DatasetFactory.create_dataset(args.dataset, config, train_transform, val_transform, args)
+    dataset = DatasetFactory.create_dataset(config, train_transform, val_transform, args)
     train_dataloader, no_of_samples = dataset.get_train_dataloader()
     val_dataloader = dataset.get_val_dataloader()
     test_dataloader = dataset.get_test_dataloader()
@@ -192,7 +195,7 @@ def main(args):
             no_weight_decay_list=model.no_weight_decay(),
             layer_decay=args.layer_decay
         )
-        optimizer = torch.optim.AdamW(param_groups, lr=args.lr)
+        optimizer = torch.optim.AdamW(param_groups, lr=args.learning_rate)
         scaler = torch.cuda.amp.GradScaler()
 
         ### Initialize wandb
@@ -220,7 +223,7 @@ def main(args):
                     "Optimizer": optimizer,
                     "Loss": criterion,
                     "Output dir": output_dir,
-                    "Learning rate": args.lr,
+                    "Learning rate": args.learning_rate,
                     "Min learning rate": args.min_lr,
                     "Warmup epochs": args.warmup_epochs,
                     "Weight decay": args.weight_decay,
@@ -245,7 +248,7 @@ def main(args):
             elif args.partition:
                 result_csv_path = os.path.join("results", f"{args.dataset}_partition_results.csv")
             else:
-                result_csv_path = os.path.join("results", f"{args.dataset}_results.csv")
+                result_csv_path = os.path.join("results", f"{args.dataset}_seed_results.csv")
             if os.path.exists(result_csv_path):
                 result_df = pd.read_csv(result_csv_path)
             else:
@@ -258,7 +261,7 @@ def main(args):
                 args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
                 round(eval_accuracy, 4), round(eval_precision, 4), round(eval_recall, 4), round(eval_f1score, 4),
                 round(eval_acc1, 4), round(eval_acc5, 4), args.batch_size, args.num_epochs, args.patience,
-                args.drop_path, args.global_pool, args.lr, args.min_lr, args.weight_decay, args.layer_decay,
+                args.drop_path, args.global_pool, args.learning_rate, args.min_lr, args.weight_decay, args.layer_decay,
                 args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
             ]
             result_df.loc[len(result_df)] = current_result
@@ -272,7 +275,7 @@ def main(args):
                 output_dir, args.patience,
                 scaler, args.name_of_run, criterion, args
             )
-            pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall = evaluate_model_segmentation(
+            pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1 = evaluate_model_segmentation(
                 model=model, test_dataloader=test_dataloader,
                 device=device, output_dir=output_dir,
                 config=config, args=args
@@ -290,14 +293,14 @@ def main(args):
             else:
                 result_df = pd.DataFrame(columns=[
                     "Downstream Task", "Training type", "Train Model", "Pre-training configuration", "balance_data", "data_configuration", "no_of_training_samples",
-                    "Pixel IoU", "Pixel Accuracy", "Pixel Precision", "Pixel Recall", "Pixel Dice", "Object Precision", "Object Recall",
+                    "Pixel IoU", "Pixel Accuracy", "Pixel Precision", "Pixel Recall", "Pixel Dice", "Object Precision", "Object Recall", "Object F1-Score",
                     "batch_size", "num_epochs", "patience", "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay",
                     "warmup_epochs", "max_norm", "accum_iter", "output_folder"
                 ])
             current_result = [
                 args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
-                pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall,
-                args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.lr, args.min_lr,
+                pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall, object_f1,
+                args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.learning_rate, args.min_lr,
                 args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
             ]
             result_df.loc[len(result_df)] = current_result
@@ -312,26 +315,28 @@ def main(args):
             result_csv_path = os.path.join("results", f"{args.dataset}_results_classification_evaluate.csv")
             eval_accuracy, eval_precision, eval_recall, eval_f1score, eval_acc1, eval_acc5 = evaluate_model_classification(
                 model, test_dataloader,
-                device, result_csv_path,
-                "", config, args.name_of_run,
-                output_dir, args.name_of_run,
-                len(train_dataloader)*args.batch_size, args
+                device, config, args.name_of_run,
+                metrics_dir
             )
 
         if "segmentation" in config["task_type"]:
             result_csv_path = os.path.join("results", f"{args.dataset}_results_segmentation_evaluate.csv")
-            pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall = evaluate_model_segmentation(
-                model=model, output_dir=args.output_dir,
-                test_dataloader=test_dataloader, device=device,
-                result_csv_path=result_csv_path, config=config,
-                pretraining_configuration=pretraining_configuration, args=args
+            pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1 = evaluate_model_segmentation(
+                model=model, test_dataloader=test_dataloader,
+                device=device, output_dir=args.output_dir,
+                config=config, args=args
             )
 
 
 if __name__ == "__main__":
+
     args = get_args_parser()
     args = args.parse_args()
-    args.seed = random.randint(0, 2**32 - 1)
+    if args.random_seed_per_run:
+        args.seed = random.randint(0, 2**32 - 1)
+    else:
+        args.seed = 42
     seed_everything(args.seed)
+
     main(args)
     torch.cuda.empty_cache()

@@ -22,7 +22,7 @@ def create_combined_encoder(
 ) -> torch.nn.Module:
     """
     Create a combined encoder using task vectors.
-    
+
     Args:
         model_combination: Dictionary mapping model names to checkpoint epochs
         pretrained_model_path: Path to pre-trained model

@@ -9,8 +9,6 @@ from sklearn.metrics import (
     confusion_matrix, f1_score,
     precision_score, recall_score
 )
-import sys
-import time
 from timm.utils import accuracy
 from tqdm import tqdm
 from typing import Iterable
@@ -18,10 +16,9 @@ import wandb
 
 import segmentation_models_pytorch as smp
 import torch
-from torch.autograd import Variable
 
 import utils.lr_sched as lr_sched
-from utils.metrics import get_object_level_metrics
+from utils.metrics import compute_object_metrics
 import utils.misc as misc
 
 
@@ -336,27 +333,29 @@ def evaluate_model_segmentation(
     model.to(device)
     model.eval()
 
+    os.makedirs(os.path.join(output_dir, "predictions"), exist_ok=True)
+
+    pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = [], [], [], [], []
+    object_precision, object_recall, object_f1 = [], [], []
+
     with torch.no_grad():
-
-        os.makedirs(os.path.join(output_dir, "predictions"), exist_ok=True)
-        all_tps, all_fps, all_fns = 0, 0, 0
-        pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = [], [], [], [], []
-
         for _, (inputs, labels, filename) in enumerate(tqdm(test_dataloader)):
-
             inputs = inputs.to(device, non_blocking=True)
             labels = labels.to(device, non_blocking=True)
 
             outputs = model(inputs)
 
-            if config["num_classes"] == 1:
+            if config["num_classes"] == 2:
                 posterior = torch.sigmoid(outputs)
                 prediction = torch.where(posterior > 0.5, 1, 0)
             else:
                 posterior = torch.softmax(outputs, dim=1)
-                prediction = torch.argmax(posterior)
+                prediction = torch.argmax(posterior, dim=1, keepdim=True)
 
-            cv2.imwrite(os.path.join(output_dir, "predictions", filename[0]), prediction.cpu().numpy()[0].squeeze().astype(np.uint8))
+            cv2.imwrite(
+                os.path.join(output_dir, "predictions", filename[0]),
+                prediction.cpu().numpy()[0].squeeze().astype(np.uint8)
+            )
 
             tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
 
@@ -364,36 +363,36 @@ def evaluate_model_segmentation(
             pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro-imagewise").item())
             pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro-imagewise").item())
             pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro-imagewise").item())
-            current_dice_coff = (2 * tp) / ((2* tp) + fp + fn)
-            pixel_dice.append(current_dice_coff.item())
-            current_tps, current_fps, current_fns = get_object_level_metrics(labels.cpu().numpy()[0], outputs.cpu().numpy()[0])
-            all_tps += current_tps
-            all_fps += current_fps
-            all_fns += current_fns
 
+            current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
+            pixel_dice.append(current_dice.item())
 
-    pixel_iou = sum(pixel_iou) / len(pixel_iou)
-    pixel_accuracy = sum(pixel_accuracy) / len(pixel_accuracy)
-    pixel_precision = sum(pixel_precision) / len(pixel_precision)
-    pixel_recall = sum(pixel_recall) / len(pixel_recall)
-    pixel_dice = sum(pixel_dice) / len(pixel_dice)
-    if all_tps + all_fps > 0:
-        object_precision = all_tps / (all_tps + all_fps)
-    else:
-        object_precision = float("nan")
+            pred_np = prediction.cpu().numpy()[0].squeeze()
+            labels_np = labels.cpu().numpy()[0].squeeze()
 
-    if all_tps + all_fns > 0:
-        object_recall = all_tps / (all_tps + all_fns)
-    else:
-        object_recall = float("nan")
+            metrics = compute_object_metrics(labels_np, pred_np, iou_threshold=0.5)
+            object_precision.append(metrics['precision'])
+            object_recall.append(metrics['recall'])
+            object_f1.append(metrics['f1_score'])
 
-    print("-"*60)
+    pixel_iou = np.nanmean(pixel_iou)
+    pixel_accuracy = np.nanmean(pixel_accuracy)
+    pixel_precision = np.nanmean(pixel_precision)
+    pixel_recall = np.nanmean(pixel_recall)
+    pixel_dice = np.nanmean(pixel_dice)
+    object_precision = np.nanmean(object_precision)
+    object_recall = np.nanmean(object_recall)
+    object_f1 = np.nanmean(object_f1)
+
+    print("-" * 60)
     print("Pixel IoU:", pixel_iou)
     print("Pixel Accuracy:", pixel_accuracy)
     print("Pixel Precision:", pixel_precision)
     print("Pixel Recall:", pixel_recall)
-    print("Pixel Dice", pixel_dice)
+    print("Pixel Dice:", pixel_dice)
     print("Object Precision:", object_precision)
     print("Object Recall:", object_recall)
+    print("Object F1 Score:", object_f1)
+    print("-" * 60)
 
-    return pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall
+    return pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1

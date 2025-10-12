@@ -10,13 +10,40 @@
 # --------------------------------------------------------
 
 from functools import partial
+import lpips
 
 import torch
 import torch.nn as nn
 
+from torchmetrics.functional import structural_similarity_index_measure as ssim
 from timm.models.vision_transformer import PatchEmbed, Block
-
+import torch.nn.functional as F
 from utils.pos_embed import get_2d_sincos_pos_embed
+
+
+def gradient_loss(pred, target):
+    """
+    Compute L1 loss on image gradients for edge preservation.
+    
+    Args:
+        pred: [N, C, H, W] - Predicted images
+        target: [N, C, H, W] - Target images
+    
+    Returns:
+        loss: Scalar gradient loss
+    """
+    # Compute horizontal gradients
+    pred_dx = pred[:, :, :, 1:] - pred[:, :, :, :-1]
+    target_dx = target[:, :, :, 1:] - target[:, :, :, :-1]
+
+    # Compute vertical gradients
+    pred_dy = pred[:, :, 1:, :] - pred[:, :, :-1, :]
+    target_dy = target[:, :, 1:, :] - target[:, :, :-1, :]
+    
+    # L1 loss on gradients
+    loss = F.l1_loss(pred_dx, target_dx) + F.l1_loss(pred_dy, target_dy)
+    
+    return loss
 
 
 class MaskedAutoencoderViT(nn.Module):
@@ -25,11 +52,12 @@ class MaskedAutoencoderViT(nn.Module):
     def __init__(self, img_size=224, patch_size=16, in_chans=3,
                  embed_dim=1024, depth=24, num_heads=16,
                  decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, args=None):
         super().__init__()
 
         # --------------------------------------------------------------------------
         # MAE encoder specifics
+        self.args = args
         self.in_chans = in_chans
         self.patch_embed = PatchEmbed(img_size, patch_size, self.in_chans, embed_dim)
         num_patches = self.patch_embed.num_patches
@@ -60,6 +88,16 @@ class MaskedAutoencoderViT(nn.Module):
         # --------------------------------------------------------------------------
 
         self.norm_pix_loss = norm_pix_loss
+        if self.args.combined_loss:
+            # Initialize LPIPS
+            self.lpips_fn = lpips.LPIPS(net='alex')  # Use 'alex' for faster computation, or 'vgg' for better quality
+            
+            # Freeze LPIPS parameters - we don't want to train it
+            for param in self.lpips_fn.parameters():
+                param.requires_grad = False
+            
+            # Set LPIPS to eval mode
+            self.lpips_fn.eval()
 
         self.initialize_weights()
 
@@ -117,7 +155,7 @@ class MaskedAutoencoderViT(nn.Module):
         p = self.patch_embed.patch_size[0]
         h = w = int(x.shape[1]**.5)
         assert h * w == x.shape[1]
-        
+
         # x = x.reshape(shape=(x.shape[0], h, w, p, p, 1))
         x = x.reshape(shape=(x.shape[0], h, w, p, p, self.in_chans))
         x = torch.einsum('nhwpqc->nchpwq', x)
@@ -133,9 +171,9 @@ class MaskedAutoencoderViT(nn.Module):
         """
         N, L, D = x.shape  # batch, length, dim
         len_keep = int(L * (1 - mask_ratio))
-        
+
         noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
-        
+
         # sort noise for each sample
         ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
         ids_restore = torch.argsort(ids_shuffle, dim=1)
@@ -216,12 +254,76 @@ class MaskedAutoencoderViT(nn.Module):
         loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
 
         loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
-        return loss
+        return loss, {
+            'mse': loss.item()
+        }
+
+    def forward_combined_loss(self, imgs, pred, mask):
+        """
+        imgs: [N, 3, H, W]
+        pred: [N, L, p*p*3]
+        mask: [N, L], 0 is keep, 1 is remove
+        """
+        target = self.patchify(imgs)
+
+        if self.norm_pix_loss:
+            mean = target.mean(dim=-1, keepdim=True)
+            var = target.var(dim=-1, keepdim=True)
+            std = (var + 1.e-6)**.5
+            target_normalized = (target - mean) / std
+        else:
+            target_normalized = target
+
+        mse_loss = (pred - target_normalized) ** 2
+        mse_loss = mse_loss.mean(dim=-1)
+        mse_loss = (mse_loss * mask).sum() / mask.sum()
+
+        if self.norm_pix_loss:
+            pred_denormalized = pred * std + mean
+        else:
+            pred_denormalized = pred
+
+        pred_imgs_full = self.unpatchify(pred_denormalized)
+        target_imgs_full = imgs
+
+        mask_imgs = self.unpatchify(mask.unsqueeze(-1).repeat(1, 1, pred.shape[-1]))
+        mask_imgs = (mask_imgs > 0.5).float()
+
+        pred_imgs = pred_imgs_full * mask_imgs
+        target_imgs = target_imgs_full * mask_imgs
+
+        ssim_val = ssim(pred_imgs, target_imgs, data_range=1.0)
+        ssim_loss = 1 - ssim_val
+
+        pred_imgs_scaled = pred_imgs * 2.0 - 1.0
+        target_imgs_scaled = target_imgs * 2.0 - 1.0
+        lpips_loss = self.lpips_fn(pred_imgs_scaled, target_imgs_scaled).mean()
+
+        grad_loss = gradient_loss(pred_imgs, target_imgs)
+
+        total_loss = (
+            self.args.mse_weight * mse_loss + 
+            self.args.ssim_weight * ssim_loss + 
+            self.args.lpips_weight * lpips_loss + 
+            self.args.grad_weight * grad_loss
+        )
+
+        return total_loss, {
+            'mse': mse_loss.item(),
+            'ssim': ssim_loss.item(),
+            'ssim_value': ssim_val.item(),
+            'lpips': lpips_loss.item(),
+            'gradient': grad_loss.item()
+        }
+
 
     def forward(self, imgs, mask_ratio=0.75):
         latent, mask, ids_restore = self.forward_encoder(imgs, mask_ratio)
         pred = self.forward_decoder(latent, ids_restore)  # [N, L, p*p*3]
-        loss = self.forward_loss(imgs, pred, mask)
+        if self.args.combined_loss:
+            loss = self.forward_combined_loss(imgs, pred, mask)
+        else:
+            loss = self.forward_loss(imgs, pred, mask)
         return loss, pred, mask
 
 
@@ -229,12 +331,12 @@ def mae_vit_customized(
     img_size=224, patch_size=16, in_chans=3,
     embed_dim=1024, depth=24, num_heads=16,
     decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+    mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, args=None
 ):
     model = MaskedAutoencoderViT(
         img_size=img_size, patch_size=patch_size, in_chans=in_chans,
         embed_dim=embed_dim, depth=depth, num_heads=num_heads,
         decoder_embed_dim=decoder_embed_dim, decoder_depth=decoder_depth, decoder_num_heads=decoder_num_heads,
-        mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss
+        mlp_ratio=mlp_ratio, norm_layer=norm_layer, norm_pix_loss=norm_pix_loss, args=args
     )
     return model

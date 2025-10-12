@@ -93,63 +93,59 @@ class Segmentation_ViT(nn.Module):
         self.encoder_output_dim = encoder_output_dim
         
         # Decoder dimensions
-        self.decoder_base_channels = 256
+        decoder_base_channels = 256
+        self.decoder_base_channels = decoder_base_channels
         num_output_classes = 1
-
+        
+        # Dynamic linear projections for different input sizes (from attached code)
         self.projection_layers = nn.ModuleDict()
-        self.decoder_stages = nn.ModuleDict()
-
-        # Common decoder stages
-        self.stage1 = self._make_decoder_stage(self.decoder_base_channels, self.decoder_base_channels // 2)
-        self.stage2 = self._make_decoder_stage(self.decoder_base_channels // 2, self.decoder_base_channels // 4)
-        self.stage3 = self._make_decoder_stage(self.decoder_base_channels // 4, self.decoder_base_channels // 8)
-        self.stage4 = self._make_decoder_stage(self.decoder_base_channels // 8, self.decoder_base_channels // 16)
-
-        # Final classification layer
-        self.final_conv = nn.Conv2d(self.decoder_base_channels // 16, num_output_classes, 
-                                  kernel_size=1, stride=1, padding=0)
+        
+        # Spatial projection after linear projection
+        self.spatial_projection = nn.Conv2d(encoder_output_dim, decoder_base_channels, kernel_size=1)
+        
+        # Decoder stages (your architecture)
+        self.stage1 = self._make_decoder_stage(decoder_base_channels, decoder_base_channels // 2)
+        self.stage2 = self._make_decoder_stage(decoder_base_channels // 2, decoder_base_channels // 4)
+        self.stage3 = self._make_decoder_stage(decoder_base_channels // 4, decoder_base_channels // 8)
+        self.stage4 = self._make_decoder_stage(decoder_base_channels // 8, decoder_base_channels // 16)
+        
+        # Final prediction layer
+        self.final_conv = nn.Conv2d(decoder_base_channels // 16, num_output_classes, kernel_size=1)
 
     def _make_decoder_stage(self, in_channels, out_channels):
         return nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=3, stride=2, 
-                             padding=1, output_padding=1),
+            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
+            nn.BatchNorm2d(out_channels),
+            nn.ReLU(inplace=True),
+            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
             nn.BatchNorm2d(out_channels),
             nn.ReLU(inplace=True)
         )
-
+    
     def _get_feature_map_size_and_stages(self, input_size):
-        """
-        Determine the initial feature map size and number of upsampling stages needed
-        based on input image size.
-        """
-        # Calculate how many times we need to upsample to reach target size
-        # Each stage doubles the size, so we need log2(target_size / initial_size) stages
-        
-        # Start with a base feature map size (e.g., 16x16 or 32x32)
-        # Choose based on input size to avoid too many or too few upsampling stages
+        """From attached code"""
         if input_size <= 128:
-            initial_feature_size = 8   # 8->16->32->64->128 (4 stages)
+            initial_feature_size = 8
             num_stages = 4
         elif input_size <= 256:
-            initial_feature_size = 16  # 16->32->64->128->256 (4 stages)
+            initial_feature_size = 16
             num_stages = 4
         elif input_size <= 512:
-            initial_feature_size = 32  # 32->64->128->256->512 (4 stages)
+            initial_feature_size = 32
             num_stages = 4
         else:
-            # For larger sizes, might need 5 stages
-            initial_feature_size = 32  # 32->64->128->256->512->1024 (5 stages)
+            initial_feature_size = 32
             num_stages = 5
             
         return initial_feature_size, num_stages
     
     def _get_or_create_projection(self, input_size):
-        """Get or create projection layer for specific input size"""
+        """From attached code - creates dynamic linear projection"""
         size_key = str(input_size)
         
         if size_key not in self.projection_layers:
             initial_feature_size, _ = self._get_feature_map_size_and_stages(input_size)
-            projected_feature_dim = initial_feature_size * initial_feature_size * self.decoder_base_channels
+            projected_feature_dim = initial_feature_size * initial_feature_size * self.encoder_output_dim
             
             self.projection_layers[size_key] = nn.Linear(
                 self.encoder_output_dim, projected_feature_dim
@@ -165,35 +161,41 @@ class Segmentation_ViT(nn.Module):
         return self.encoder.no_weight_decay()
 
     def forward(self, x):
-        batch_size = x.shape[0]
-        input_size = x.shape[-1]  # Assuming square images
+        B, C, H, W = x.shape
         
         # Get encoder features
-        features = self.encoder(x)
+        features = self.encoder(x)  # Assume [B, C] for global pooled encoder
         
         # Get appropriate projection layer and feature map size
-        initial_feature_size, num_stages = self._get_feature_map_size_and_stages(input_size)
-        projection_layer = self._get_or_create_projection(input_size)
+        initial_feature_size, num_stages = self._get_feature_map_size_and_stages(H)
+        projection_layer = self._get_or_create_projection(H)
         
-        # Project to spatial feature maps
+        # Project to spatial feature maps using linear layer
         features = projection_layer(features)
-        features = features.reshape(batch_size, self.decoder_base_channels, 
-                                  initial_feature_size, initial_feature_size)
+        features = features.reshape(B, self.encoder_output_dim, 
+                                   initial_feature_size, initial_feature_size)
+        
+        # Project to decoder channels
+        x = self.spatial_projection(features)
         
         # Apply decoder stages based on needed upsampling
         if num_stages >= 1:
-            features = self.stage1(features)
+            x = self.stage1(x)
         if num_stages >= 2:
-            features = self.stage2(features)
+            x = self.stage2(x)
         if num_stages >= 3:
-            features = self.stage3(features)
+            x = self.stage3(x)
         if num_stages >= 4:
-            features = self.stage4(features)
+            x = self.stage4(x)
         
-        # Final classification layer
-        output = self.final_conv(features)
-
-        return output
+        # Final prediction
+        x = self.final_conv(x)
+        
+        # Ensure output matches input size exactly
+        if x.shape[-2:] != (H, W):
+            x = F.interpolate(x, size=(H, W), mode="bilinear", align_corners=False)
+        
+        return x
 
 
 

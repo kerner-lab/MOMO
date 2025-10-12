@@ -25,7 +25,7 @@ class CustomDataset(Dataset):
         self.masks_paths = []
         self.filenames = []
 
-        for idx, row in df.iterrows():
+        for _, row in df.iterrows():
             image_path = os.path.join(data_dir, "data", row["split"], "images", row["file_id"])
             mask_path = os.path.join(data_dir, "data", row["split"], "masks", row["file_id"])
             self.image_paths.append(image_path)

@@ -32,7 +32,8 @@ def create_model(
     train_model: str,
     model_unit: str,
     device: torch.device,
-    if_pretrained: bool = False
+    if_pretrained: bool = False,
+    args=None
 ) -> torch.nn.Module:
     
     """
@@ -50,37 +51,40 @@ def create_model(
 
     if "vit" in train_model:
 
-        if train_model == "vit-b-16":
+        if train_model == "vit-t-16":
+            model = mae_vit_customized(
+                img_size=224, patch_size=16, in_chans=3,
+                embed_dim=192, depth=12, num_heads=3,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, 
+                args=args
+            )
+        elif train_model == "vit-s-16":
+            model = mae_vit_customized(
+                img_size=224, patch_size=16, in_chans=3,
+                embed_dim=384, depth=12, num_heads=6,
+                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, 
+                args=args
+            )
+        elif train_model == "vit-b-16":
             model = mae_vit_customized(
                 img_size=224, patch_size=16, in_chans=3,
                 embed_dim=768, depth=12, num_heads=12,
                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-            )
-        elif train_model == "vit-b-32":
-            model = mae_vit_customized( 
-                img_size=224, patch_size=32, in_chans=3,
-                embed_dim=768, depth=12, num_heads=12,
-                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, 
+                args=args
             )
         elif train_model == "vit-l-16":
             model = mae_vit_customized(
                 img_size=224, patch_size=16, in_chans=3,
                 embed_dim=1024, depth=24, num_heads=16,
                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
-            )
-        elif train_model == "vit-l-32":
-            model = mae_vit_customized(
-                img_size=224, patch_size=32, in_chans=3,
-                embed_dim=1024, depth=24, num_heads=16,
-                decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
-                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False
+                mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False,
+                args=args
             )
         else:
-            raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
-            return
+            raise ValueError(f"Unknown model type: {train_model}. Available types: vit-t-16, vit-s-16, vit-b-16, vit-l-16")
 
         # Move model to device
         model = model.to(device)

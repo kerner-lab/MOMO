@@ -82,112 +82,190 @@ def model_training(
     print(f"Training metrics saved to {metrics_file}")
 
 
+
 def model_training_vit(
     model: torch.nn.Module,
-    model_without_ddp: torch.nn.Module,
     train_dataloader: Iterable, val_dataloader: Iterable,
     num_epochs: int, device: torch.device, output_dir: str,
     loss_scaler, optimizer, wandb, args
 ):
 
-    # Dictionary to store metrics
     training_metrics = {
-        "epochs": [],
-        "train_loss": [],
-        "val_loss": []
+        "epochs_samples": [],
+        "train_loss": [], "train_mse": [], "train_ssim": [], "train_lpips": [], "train_gradient": [],
+        "val_loss": [], "val_mse": [], "val_ssim": [], "val_lpips": [], "val_gradient": []
     }
 
     with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
 
         for epoch in tqdm_epoch:
 
-            # Training
             model.train(True)
             metric_logger = misc.MetricLogger(delimiter="  ")
             metric_logger.add_meter('lr', misc.SmoothedValue(window_size=1, fmt='{value:.6f}'))
-            header = 'Epoch: [{}]'.format(epoch)
-            print_freq = 20
 
             accum_iter = args.accum_iter
             optimizer.zero_grad()
 
-            for data_iter_step, (samples, _) in enumerate(metric_logger.log_every(train_dataloader, print_freq, header)):
+            train_loss, train_mse, train_ssim, train_lpips, train_gradient = 0, 0, 0, 0, 0
 
-                # we use a per iteration (instead of per epoch) lr scheduler
-                if data_iter_step % accum_iter == 0:
-                    lr_sched.adjust_learning_rate(optimizer, data_iter_step / len(train_dataloader) + epoch, args)
+            for data_iter_step_train, (samples, _) in enumerate(train_dataloader):
+
+                if data_iter_step_train % accum_iter == 0:
+                    lr_sched.adjust_learning_rate(optimizer, data_iter_step_train / len(train_dataloader) + epoch, args)
 
                 samples = samples.to(device, non_blocking=True)
 
-                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
-                loss_value = loss.item()
+                if args.combined_loss:
+                    loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                    current_loss, loss_dict = loss[0], loss[1]
+                    loss_value = current_loss.item()
+                    train_loss += loss_value
+                    train_mse += loss_dict['mse']
+                    train_ssim += loss_dict['ssim']
+                    train_lpips += loss_dict['lpips']
+                    train_gradient += loss_dict['gradient']
+
+                    if args.wandb_enabled:
+                        wandb.log({
+                            "Training Step Loss": loss_value,
+                            "Training Step MSE": loss_dict['mse'],
+                            "Training Step SSIM": loss_dict['ssim'],
+                            "Training Step LPIPS": loss_dict['lpips'],
+                            "Training Step Gradient": loss_dict['gradient']
+                        }, step=data_iter_step_train)
+                else:
+                    loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                    current_loss = loss[0]
+                    loss_value = current_loss.item()
+                    train_loss += loss_value
+
+                    if args.wandb_enabled:
+                        wandb.log({"Training Step Loss": loss_value}, step=data_iter_step_train)
 
                 if not math.isfinite(loss_value):
                     print("Training Loss is {}, stopping training".format(loss_value))
                     sys.exit(1)
 
-                loss /= accum_iter
-                loss_scaler(loss, optimizer, parameters=model.parameters(),
-                            update_grad=(data_iter_step + 1) % accum_iter == 0)
-                if (data_iter_step + 1) % accum_iter == 0:
+                current_loss /= accum_iter
+                loss_scaler(current_loss, optimizer, parameters=model.parameters(),
+                            update_grad=(data_iter_step_train + 1) % accum_iter == 0)
+                if (data_iter_step_train + 1) % accum_iter == 0:
                     optimizer.zero_grad()
 
                 torch.cuda.synchronize()
 
-                metric_logger.update(loss=loss_value)
-
                 lr = optimizer.param_groups[0]["lr"]
                 metric_logger.update(lr=lr)
 
-            current_training_loss = metric_logger.meters["loss"].global_avg
+                samples_seen_train = (data_iter_step_train + 1) * args.batch_size
+                if samples_seen_train % args.evaluation_interval < args.batch_size:
 
-            # Validation
-            model.eval()
-            with torch.no_grad():
-                metric_logger = misc.MetricLogger(delimiter="  ")
-                header = 'Validation Epoch: [{}]'.format(epoch)
-                print_freq = 20
+                    model.eval()
+                    val_loss, val_mse, val_ssim, val_lpips, val_gradient = 0, 0, 0, 0, 0
 
-                accum_iter = args.accum_iter
+                    with torch.no_grad():
+                        for data_iter_step_val, (samples, _) in enumerate(val_dataloader):
 
-                for data_iter_step, (samples, _) in enumerate(metric_logger.log_every(val_dataloader, print_freq, header)):
+                            samples = samples.to(device, non_blocking=True)
 
-                    samples = samples.to(device, non_blocking=True)
+                            if args.combined_loss:
+                                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                                current_loss, loss_dict = loss[0], loss[1]
+                                loss_value = current_loss.item()
+                                val_loss += loss_value
+                                val_mse += loss_dict['mse']
+                                val_ssim += loss_dict['ssim']
+                                val_lpips += loss_dict['lpips']
+                                val_gradient += loss_dict['gradient']
 
-                    loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
-                    loss_value = loss.item()
+                                if args.wandb_enabled:
+                                    wandb.log({
+                                        "Validation Step Loss": loss_value,
+                                        "Validation Step MSE": loss_dict['mse'],
+                                        "Validation Step SSIM": loss_dict['ssim'],
+                                        "Validation Step LPIPS": loss_dict['lpips'],
+                                        "Validation Step Gradient": loss_dict['gradient']
+                                    }, step=data_iter_step_val)
+                            else:
+                                loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
+                                current_loss = loss[0]
+                                loss_value = current_loss.item()
+                                val_loss += loss_value
 
-                    if not math.isfinite(loss_value):
-                        print("Validation Loss is {}, stopping training".format(loss_value))
-                        sys.exit(1)
+                                if args.wandb_enabled:
+                                    wandb.log({"Validation Step Loss": loss_value}, step=data_iter_step_val)
 
-                    metric_logger.update(loss=loss_value)
+                            if not math.isfinite(loss_value):
+                                print("Validation Loss is {}, stopping training".format(loss_value))
+                                sys.exit(1)
 
-            current_validation_loss = metric_logger.meters["loss"].global_avg
+                            samples_seen_val = (data_iter_step_val + 1) * args.batch_size
+                            if samples_seen_val % args.evaluation_interval < args.batch_size:
+                                break
 
-            # Store metrics
-            training_metrics["epochs"].append(epoch)
-            training_metrics["train_loss"].append(float(current_training_loss))
-            training_metrics["val_loss"].append(float(current_validation_loss))
+                    avg_train_loss = train_loss / (data_iter_step_train + 1)
+                    avg_val_loss = val_loss / (data_iter_step_val + 1)
 
-            # Log to wandb
-            if args.wandb_enabled:
-                wandb.log(
-                    {
-                        "Training Loss": current_training_loss,
-                        "Validation Loss": current_validation_loss,
-                        "Epoch": epoch
-                    }
-                )
-            print(f"Epoch [{epoch}/{num_epochs}], Train Loss: {current_training_loss:.4f}, Val Loss: {current_validation_loss:.4f}")
+                    training_metrics["epochs_samples"].append(f"{epoch}-{samples_seen_train}")
+                    training_metrics["train_loss"].append(float(avg_train_loss))
+                    training_metrics["val_loss"].append(float(avg_val_loss))
 
-            # Save the encoder part of the model
-            if ((epoch) % 1 == 0) or (epoch == 0):
-                misc.save_model(args=args, output_dir=output_dir, save_name=f"{args.name_of_run}-{epoch}",model=model)
+                    if args.combined_loss:
+                        avg_train_mse = train_mse / (data_iter_step_train + 1)
+                        avg_train_ssim = train_ssim / (data_iter_step_train + 1)
+                        avg_train_lpips = train_lpips / (data_iter_step_train + 1)
+                        avg_train_gradient = train_gradient / (data_iter_step_train + 1)
+                        avg_val_mse = val_mse / (data_iter_step_val + 1)
+                        avg_val_ssim = val_ssim / (data_iter_step_val + 1)
+                        avg_val_lpips = val_lpips / (data_iter_step_val + 1)
+                        avg_val_gradient = val_gradient / (data_iter_step_val + 1)
 
-    # Save training metrics to JSON file
-    metrics_file = os.path.join(output_dir, f"{args.name_of_run}-training_metrics.json")
-    with open(metrics_file, 'w') as f:
-        json.dump(training_metrics, f, indent=4)
+                        training_metrics["train_mse"].append(float(avg_train_mse))
+                        training_metrics["train_ssim"].append(float(avg_train_ssim))
+                        training_metrics["train_lpips"].append(float(avg_train_lpips))
+                        training_metrics["train_gradient"].append(float(avg_train_gradient))
+                        training_metrics["val_mse"].append(float(avg_val_mse))
+                        training_metrics["val_ssim"].append(float(avg_val_ssim))
+                        training_metrics["val_lpips"].append(float(avg_val_lpips))
+                        training_metrics["val_gradient"].append(float(avg_val_gradient))
+
+                    metrics_file = os.path.join(output_dir, f"{args.name_of_run}-training_metrics.json")
+                    with open(metrics_file, 'w') as f:
+                        json.dump(training_metrics, f, indent=4)
+
+                    if args.wandb_enabled:
+                        log_dict = {
+                            "Training Loss 100k": avg_train_loss,
+                            "Validation Loss 100k": avg_val_loss,
+                            "Epoch": epoch
+                        }
+                        if args.combined_loss:
+                            log_dict.update({
+                                "Training MSE 100k": avg_train_mse,
+                                "Training SSIM 100k": avg_train_ssim,
+                                "Training LPIPS 100k": avg_train_lpips,
+                                "Training Gradient 100k": avg_train_gradient,
+                                "Validation MSE 100k": avg_val_mse,
+                                "Validation SSIM 100k": avg_val_ssim,
+                                "Validation LPIPS 100k": avg_val_lpips,
+                                "Validation Gradient 100k": avg_val_gradient
+                            })
+                        wandb.log(log_dict)
+
+                    if args.combined_loss:
+                        print(f"Epoch [{epoch}/{num_epochs}]")
+                        print(f"  Train Loss: {avg_train_loss:.4f} | Train - MSE: {avg_train_mse:.4f}, SSIM: {avg_train_ssim:.4f}, LPIPS: {avg_train_lpips:.4f}, Gradient: {avg_train_gradient:.4f}")
+                        print(f"  Val Loss: {avg_val_loss:.4f} | Val - MSE: {avg_val_mse:.4f}, SSIM: {avg_val_ssim:.4f}, LPIPS: {avg_val_lpips:.4f}, Gradient: {avg_val_gradient:.4f}\n")
+                    else:
+                        print(f"Epoch [{epoch}/{num_epochs}] Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+
+                    model.train(True)
+                    optimizer.zero_grad()
+                    train_loss, train_mse, train_ssim, train_lpips, train_gradient = 0, 0, 0, 0, 0
+
+                    misc.save_model(args=args, output_dir=output_dir, save_name=f"checkpoint_{args.name_of_run}-{epoch}-{samples_seen_train}", model=model)
+                    misc.save_model(args=args, output_dir=output_dir, save_name="last", model=model)
 
     print(f"Training metrics saved to {metrics_file}")
+
