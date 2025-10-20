@@ -132,6 +132,7 @@ def main(args):
             args.data_dir,
             args.data_df,
             args.if_pretrained,
+            args.which_instrument,
             args.batch_size,
             args.num_workers,
             args.pin_mem

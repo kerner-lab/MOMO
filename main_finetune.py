@@ -48,8 +48,11 @@ def get_args_parser():
                            choices=["0.01x_partition", "0.02x_partition", "0.05x_partition", "0.10x_partition", "0.20x_partition", "0.25x_partition", "0.50x_partition"])
 
     # Finetuning parameters
-    argparser.add_argument("--which_pretraining", type=str, default=None, required=True,
+    argparser.add_argument("--which_finetuning", type=str, default=None, required=True,
                            choices=["imagenet_pretrained", "scratch_training", "finetuning", "evaluation"])
+    argparser.add_argument("--which_pretraining", type=str, default="HiRISE, CTX, THEMIS", required=False,
+                           help="For finetuning, please provide the name of the pretrained model",
+                           choices=["ImageNet", "HiRISE", "CTX", "THEMIS", "HiRISE, CTX, THEMIS"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
 
@@ -102,12 +105,12 @@ def main(args):
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
     ### Initializing output directory and unique name of current run
-    if args.which_pretraining in ["imagenet_pretrained", "scratch_training"]:
-        if (args.which_pretraining == "imagenet_pretrained") and ("vit" in args.train_model) and (args.encoder_checkpoint is None):
+    if args.which_finetuning in ["imagenet_pretrained", "scratch_training"]:
+        if (args.which_finetuning == "imagenet_pretrained") and ("vit" in args.train_model) and (args.encoder_checkpoint is None):
             raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
         pretraining_configuration = "-"
-        args.name_of_run = f"{args.which_pretraining}_{args.balance_data}"
-    elif args.which_pretraining == "finetuning":
+        args.name_of_run = f"{args.which_finetuning}_{args.balance_data}"
+    elif args.which_finetuning == "finetuning":
         assert args.encoder_checkpoint is not None, "Path of pretrained encoder checkpoint must be provided for finetuning."
         path_parts = args.encoder_checkpoint.split("/")
         checkpoint_name, type_of_model = path_parts[-1], path_parts[-2]
@@ -129,8 +132,8 @@ def main(args):
     config["balance"] = args.balance_data if args.balance_data is not None else "default"
 
     ### Create transforms, datasets and dataloaders
-    train_transform = create_transforms(args.train_model, config["task_type"], is_training=True)
-    val_transform = create_transforms(args.train_model, config["task_type"], is_training=False)
+    train_transform = create_transforms(args.train_model, config["task_type"], args.which_pretraining, is_training=True)
+    val_transform = create_transforms(args.train_model, config["task_type"], args.which_pretraining, is_training=False)
 
     dataset = DatasetFactory.create_dataset(config, train_transform, val_transform, args)
     train_dataloader, no_of_samples = dataset.get_train_dataloader()
@@ -139,12 +142,12 @@ def main(args):
 
     ### Create model
     if "vit" in args.train_model:
-        model = create_finetune_model_vit(args.train_model, args.which_pretraining, args.drop_path, args.global_pool, config, args.encoder_checkpoint, device, args)
+        model = create_finetune_model_vit(args.train_model, args.which_finetuning, args.drop_path, args.global_pool, config, args.encoder_checkpoint, device, args)
     else:
-        model = create_finetune_model(args.train_model, args.which_pretraining, config, args.encoder_checkpoint, device)
+        model = create_finetune_model(args.train_model, args.which_finetuning, config, args.encoder_checkpoint, device)
     model = model.to(device)
 
-    if args.which_pretraining != "evaluation":
+    if args.which_finetuning != "evaluation":
         ### Create output and metrics directories
         if args.few_shot:
             current_output_folder = args.few_shot + "_" + datetime.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
@@ -258,7 +261,7 @@ def main(args):
                     "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay", "warmup_epochs", "max_norm", "accum_iter", "output_folder"
                 ])
             current_result = [
-                args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+                args.dataset, args.which_finetuning, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
                 round(eval_accuracy, 4), round(eval_precision, 4), round(eval_recall, 4), round(eval_f1score, 4),
                 round(eval_acc1, 4), round(eval_acc5, 4), args.batch_size, args.num_epochs, args.patience,
                 args.drop_path, args.global_pool, args.learning_rate, args.min_lr, args.weight_decay, args.layer_decay,
@@ -298,7 +301,7 @@ def main(args):
                     "warmup_epochs", "max_norm", "accum_iter", "output_folder"
                 ])
             current_result = [
-                args.dataset, args.which_pretraining, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+                args.dataset, args.which_finetuning, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
                 pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall, object_f1,
                 args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.learning_rate, args.min_lr,
                 args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
