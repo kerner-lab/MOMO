@@ -11,6 +11,7 @@ from models_pretrain import *
 from models.models_vit import vit_customized
 from utils.pos_embed import interpolate_pos_embed
 
+from models.unetformer import Segmentation_ViT_UNetFormer
 
 class Classification(nn.Module):
 
@@ -311,6 +312,7 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
 
     if "segmentation" in config["task_type"]:
         model.head = nn.Identity()
-        model = Segmentation_ViT(model, encoder_output_dim)
+        # model = Segmentation_ViT(model, encoder_output_dim)
+        model = Segmentation_ViT_UNetFormer(encoder=model, encoder_output_dim=768, num_classes=1, decoder_channels=64, window_size=8, dropout=0.1)
         model = model.to(device)
         return model

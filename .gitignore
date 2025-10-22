@@ -2,10 +2,9 @@ __pycache__/
 
 output/
 exp_logs/
-# scripts/
 results/
 final_models/
 scripts/
-
-run.sh
-todo.md
+wandb/
+segment_exps/
+logs/

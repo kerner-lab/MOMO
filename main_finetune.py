@@ -186,8 +186,9 @@ def main(args):
                 criterion = WeightedCombinedLoss(
                     num_classes=config["num_classes"],
                     class_weights=class_weights,
-                    weight_dice=0.3,
-                    weight_bce=0.7
+                    weight_dice=0.5,
+                    weight_bce=0.2,
+                    weight_boundary=0.3
                 )
             else:
                 criterion = CombinedLoss(num_classes=config["num_classes"])

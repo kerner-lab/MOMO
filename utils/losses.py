@@ -1,6 +1,7 @@
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import segmentation_models_pytorch as smp
 
 def compute_class_weights(dataset_loader, num_classes, method='inverse_frequency'):
@@ -17,7 +18,7 @@ def compute_class_weights(dataset_loader, num_classes, method='inverse_frequency
     """
     print("Computing class weights from dataset...")
     
-    if num_classes == 1:
+    if num_classes == 2:
         # Binary segmentation
         positive_pixels = 0
         total_pixels = 0
@@ -43,33 +44,68 @@ def compute_class_weights(dataset_loader, num_classes, method='inverse_frequency
     
     else:
         # Multiclass segmentation
-        class_counts = torch.zeros(num_classes)
+        class_counts = torch.zeros(num_classes) 
         
         for _, targets, _ in dataset_loader:
-            for c in range(num_classes):
+            for c in range(num_classes): 
                 class_counts[c] += (targets == c).sum().item()
         
         total_samples = class_counts.sum()
         
         if method == 'inverse_frequency':
-            weights = total_samples / (num_classes * class_counts)
+            weights = total_samples / (num_classes * class_counts) 
             # Avoid infinite weights for classes with 0 samples
             weights = torch.where(class_counts == 0, torch.tensor(1.0), weights)
         else:  # effective_number
             beta = 0.9999
             effective_nums = (1 - beta**class_counts) / (1 - beta)
             weights = (1 - beta) / effective_nums
-            weights = weights / weights.sum() * num_classes  # Normalize
+            weights = weights / weights.sum() * num_classes  # Normalize 
     
     print(f"Class weights: {weights}")
-    print(f"Class distribution: {class_counts if num_classes > 1 else f'Negative: {total_pixels - positive_pixels}, Positive: {positive_pixels}'}")
+    print(f"Class distribution: {class_counts if num_classes > 2 else f'Negative: {total_pixels - positive_pixels}, Positive: {positive_pixels}'}")
     
     return weights
 
 
+class BoundaryLoss(nn.Module):
+    """
+    Boundary-aware loss that emphasizes edges between objects.
+    """
+    def __init__(self, boundary_weight=4.0):
+        super(BoundaryLoss, self).__init__()
+        self.boundary_weight = boundary_weight
+        
+    def forward(self, pred, target):
+        # Ensure target is float and has correct shape
+        if target.dim() == 3:
+            target = target.unsqueeze(1).float()
+        else:
+            target = target.float()
+        
+        # Create 3x3 kernel for morphological operations
+        kernel = torch.ones(1, 1, 3, 3, device=pred.device)
+        
+        # Erode target to get inner region
+        target_eroded = F.conv2d(target, kernel, padding=1)
+        target_eroded = (target_eroded == 9).float()
+        
+        # Boundary is original - eroded
+        boundary = target - target_eroded
+        
+        # Compute BCE with logits (autocast-safe)
+        # Note: pred should be logits (not sigmoid applied)
+        boundary_loss = F.binary_cross_entropy_with_logits(pred, target, reduction='none') #TODO: update bce
+        boundary_loss = boundary_loss * (1 + self.boundary_weight * boundary)
+        
+        return boundary_loss.mean()
+
+
+
+
 class WeightedCombinedLoss(nn.Module):
 
-    def __init__(self, num_classes, class_weights=None, weight_dice=0.5, weight_bce=0.5):
+    def __init__(self, num_classes, class_weights=None, weight_dice=0.5, weight_bce=0.5, weight_boundary=0.0):
         """
         Initializes the weighted combined loss function.
         Args:
@@ -79,11 +115,13 @@ class WeightedCombinedLoss(nn.Module):
                                                  For multiclass: [class0_weight, class1_weight, ...]
             weight_dice (float): Weight for the Dice Loss component.
             weight_bce (float): Weight for the BCEWithLogitsLoss or CrossEntropyLoss component.
+            weight_boundary (float): Weight for the Boundary Loss component (0 to disable).
         """
         super(WeightedCombinedLoss, self).__init__()
         self.num_classes = num_classes
         self.weight_dice = weight_dice
-        self.weight_bce = weight_bce
+        self.weight_bce = weight_bce #TODO: update bce
+        self.weight_boundary = weight_boundary
 
         # Convert class_weights to tensor if provided
         if class_weights is not None:
@@ -94,18 +132,24 @@ class WeightedCombinedLoss(nn.Module):
             self.class_weights = None
 
         # Define individual losses with class weights
-        if num_classes == 1:
+        if num_classes == 2:
             # Binary segmentation
             self.dice_loss_fn = smp.losses.DiceLoss(mode="binary", from_logits=True)
 
             # For binary BCE, we'll handle weighting manually since BCEWithLogitsLoss
             # doesn't support class weights the same way
-            self.bce_loss_fn = nn.BCEWithLogitsLoss(reduction='none')
+            self.bce_loss_fn = nn.BCEWithLogitsLoss(reduction='none') #TODO: update bce
 
         else:
             # Multiclass segmentation
             self.dice_loss_fn = smp.losses.DiceLoss(mode="multiclass", from_logits=True)
-            self.bce_loss_fn = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean')
+            self.bce_loss_fn = nn.CrossEntropyLoss(weight=self.class_weights, reduction='mean') #TODO: update bce
+        
+        # Boundary loss (only for binary segmentation)
+        if weight_boundary > 0 and num_classes == 2:
+            self.boundary_loss_fn = BoundaryLoss()
+        else:
+            self.boundary_loss_fn = None
 
     def forward(self, logits, targets):
         """
@@ -118,24 +162,30 @@ class WeightedCombinedLoss(nn.Module):
         """
         dice_loss = self.dice_loss_fn(logits, targets)
         
-        if self.num_classes == 1:
+        if self.num_classes == 2:
             # Binary case - apply manual weighting
-            bce_loss_raw = self.bce_loss_fn(logits, targets)
+            bce_loss_raw = self.bce_loss_fn(logits, targets) #TODO: update bce
             
             if self.class_weights is not None:
                 # Apply class weights manually for binary case
                 weight_map = torch.where(targets == 1, 
                                        self.class_weights[1].to(targets.device), 
                                        self.class_weights[0].to(targets.device))
-                bce_loss = (bce_loss_raw * weight_map).mean()
+                bce_loss = (bce_loss_raw * weight_map).mean() #TODO: update bce
             else:
                 bce_loss = bce_loss_raw.mean()
         else:
             # Multiclass case - CrossEntropyLoss handles weighting automatically
-            bce_loss = self.bce_loss_fn(logits, targets)
+            bce_loss = self.bce_loss_fn(logits, targets) #TODO: update bce
 
         # Combine the losses
         combined_loss = (self.weight_dice * dice_loss) + (self.weight_bce * bce_loss)
+        
+        # Add boundary loss if enabled
+        if self.boundary_loss_fn is not None and self.weight_boundary > 0:
+            boundary_loss = self.boundary_loss_fn(logits, targets)
+            combined_loss = combined_loss + (self.weight_boundary * boundary_loss)
+        
         return combined_loss
 
 
@@ -150,11 +200,11 @@ class FocalDiceLoss(nn.Module):
         self.weight_focal = weight_focal
         
         self.dice_loss = smp.losses.DiceLoss(
-            mode="binary" if num_classes == 1 else "multiclass", 
+            mode="binary" if num_classes == 2 else "multiclass", 
             from_logits=True
         )
         
-        if num_classes == 1:
+        if num_classes == 2:
             self.focal_loss = smp.losses.FocalLoss(mode="binary", alpha=alpha, gamma=gamma)
         else:
             self.focal_loss = smp.losses.FocalLoss(mode="multiclass", alpha=alpha, gamma=gamma)
@@ -179,11 +229,11 @@ class CombinedLoss(nn.Module):
         super(CombinedLoss, self).__init__()
         self.num_classes = num_classes
         self.weight_dice = weight_dice
-        self.weight_bce = weight_bce
+        self.weight_bce = weight_bce #TODO: update bce
 
         # Define individual losses
-        self.dice_loss_fn = smp.losses.DiceLoss(mode="binary" if num_classes == 1 else "multiclass", from_logits=True)
-        self.bce_loss_fn = nn.BCEWithLogitsLoss() if num_classes == 1 else nn.CrossEntropyLoss()
+        self.dice_loss_fn = smp.losses.DiceLoss(mode="binary" if num_classes == 2 else "multiclass", from_logits=True)
+        self.bce_loss_fn = nn.BCEWithLogitsLoss() if num_classes == 2 else nn.CrossEntropyLoss() #TODO: update bce
 
     def forward(self, logits, targets):
         """
@@ -195,7 +245,7 @@ class CombinedLoss(nn.Module):
             torch.Tensor: Combined loss value.
         """
         dice_loss = self.dice_loss_fn(logits, targets)
-        bce_loss = self.bce_loss_fn(logits, targets)  # CrossEntropyLoss directly uses logits
+        bce_loss = self.bce_loss_fn(logits, targets)  # CrossEntropyLoss directly uses logits #TODO: update bce
 
         # Combine the losses
         combined_loss = (self.weight_dice * dice_loss) + \

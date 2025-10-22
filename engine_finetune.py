@@ -283,8 +283,8 @@ def training_model_segmentation(model: torch.nn.Module,
 
                 val_loss += loss.item()
 
-                if num_classes == 1:
-                    posterior = torch.sigmoid(outputs)
+                if num_classes == 2:
+                    posterior = torch.sigmoid(outputs, dim=1)
                     prediction = torch.where(posterior > 0.5, 1, 0)
                 else:
                     posterior = torch.softmax(outputs, dim=1)
@@ -346,7 +346,7 @@ def evaluate_model_segmentation(
             outputs = model(inputs)
 
             if config["num_classes"] == 2:
-                posterior = torch.sigmoid(outputs)
+                posterior = torch.sigmoid(outputs, dim=1)
                 prediction = torch.where(posterior > 0.5, 1, 0)
             else:
                 posterior = torch.softmax(outputs, dim=1)
