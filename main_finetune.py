@@ -38,7 +38,7 @@ def get_args_parser():
     argparser.add_argument("--data_dir", type=str, required=True, help="Data directory")
     argparser.add_argument("--dataset", type=str, required=True, help="Dataset name",
                            choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr", "mb-change_cls_ctx", "mb-change_cls_hirise",
-                                    "mb-conequest_seg", "mb-crater_binary_seg", "mb-mmls", "mb-boulder_seg"])
+                                    "mb-conequest_seg", "mb-crater_binary_seg", "mb-mmls", "mb-boulder_seg", "mb-crater_multi_seg"])
     argparser.add_argument("--balance_data", default="default", required=False, type=str,
                            choices=["loss_reweight", "under_sample", "over_sample"])
     argparser.add_argument("--few_shot", type=str, default=None, required=False,
@@ -187,8 +187,8 @@ def main(args):
                     num_classes=config["num_classes"],
                     class_weights=class_weights,
                     weight_dice=0.5,
-                    weight_bce=0.2,
-                    weight_boundary=0.3
+                    weight_ce=0.3,
+                    weight_boundary=0.2
                 )
             else:
                 criterion = CombinedLoss(num_classes=config["num_classes"])

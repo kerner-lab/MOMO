@@ -76,25 +76,43 @@ def get_object_level_metrics(y_true, y_pred, iou_threshold=0.5):
     return tp, fp, fn
 
 
-def compute_object_metrics(y_true, y_pred, iou_threshold=0.5):
+def compute_object_metrics(y_true, y_pred, iou_threshold=0.5, num_classes=2):
     """
     Compute object-level precision, recall, and F1 score.
-    
+
     Args:
-        y_true (np.ndarray): Binary ground truth mask
-        y_pred (np.ndarray): Binary predicted mask
+        y_true (np.ndarray): Ground truth mask (binary or multi-class)
+        y_pred (np.ndarray): Predicted mask (binary or multi-class)
         iou_threshold (float): IoU threshold for matching
-    
+        num_classes (int): Number of classes (2 for binary, >2 for multi-class)
+
     Returns:
         dict: Metrics including precision, recall, f1, tp, fp, fn
     """
-    
-    tp, fp, fn = get_object_level_metrics(y_true, y_pred, iou_threshold)
-    
+
+    if num_classes == 2:
+        # Binary segmentation - use existing logic
+        tp, fp, fn = get_object_level_metrics(y_true, y_pred, iou_threshold)
+    else:
+        # Multi-class segmentation - compute metrics per class and average
+        total_tp, total_fp, total_fn = 0, 0, 0
+
+        for class_id in range(1, num_classes):  # Skip background (class 0)
+            # Create binary masks for current class
+            y_true_binary = (y_true == class_id).astype(np.uint8)
+            y_pred_binary = (y_pred == class_id).astype(np.uint8)
+
+            tp, fp, fn = get_object_level_metrics(y_true_binary, y_pred_binary, iou_threshold)
+            total_tp += tp
+            total_fp += fp
+            total_fn += fn
+
+        tp, fp, fn = total_tp, total_fp, total_fn
+
     precision = tp / (tp + fp) if (tp + fp) > 0 else 0.0
     recall = tp / (tp + fn) if (tp + fn) > 0 else 0.0
     f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0.0
-    
+
     return {
         'true_positives': tp,
         'false_positives': fp,

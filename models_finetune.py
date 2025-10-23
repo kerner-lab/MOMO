@@ -66,7 +66,7 @@ class Segmentation(nn.Module):
 
         # Determine the number of output neurons based on the task
         self.num_classes = config["num_classes"]
-        out_features = 1 if self.num_classes == 1 else 3
+        out_features = self.num_classes
 
         self.upsample = nn.Sequential(
             nn.ConvTranspose2d(512, 256, kernel_size=4, stride=2, padding=1),
@@ -313,6 +313,6 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
     if "segmentation" in config["task_type"]:
         model.head = nn.Identity()
         # model = Segmentation_ViT(model, encoder_output_dim)
-        model = Segmentation_ViT_UNetFormer(encoder=model, encoder_output_dim=768, num_classes=1, decoder_channels=64, window_size=8, dropout=0.1)
+        model = Segmentation_ViT_UNetFormer(encoder=model, encoder_output_dim=encoder_output_dim, num_classes=config["num_classes"], decoder_channels=64, window_size=8, dropout=0.1)
         model = model.to(device)
         return model

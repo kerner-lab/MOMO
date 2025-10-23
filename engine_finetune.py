@@ -283,15 +283,23 @@ def training_model_segmentation(model: torch.nn.Module,
 
                 val_loss += loss.item()
 
-                if num_classes == 2:
-                    posterior = torch.sigmoid(outputs, dim=1)
-                    prediction = torch.where(posterior > 0.5, 1, 0)
-                else:
-                    posterior = torch.softmax(outputs, dim=1)
-                    prediction = torch.argmax(posterior)
+                posterior = torch.softmax(outputs, dim=1)
 
-                tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
-                val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item()
+                # Handle binary vs multi-class segmentation
+                if num_classes == 2:
+                    prediction = torch.argmax(posterior, dim=1, keepdim=True)
+                    tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
+                    val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item()
+                else:
+                    prediction = torch.argmax(posterior, dim=1)  # (B, H, W)
+                    # For multi-class, we need to one-hot encode or use proper shape
+                    tp, fp, fn, tn = smp.metrics.get_stats(
+                        prediction.unsqueeze(1),
+                        labels.type(torch.int64),
+                        mode='multiclass',
+                        num_classes=num_classes
+                    )
+                    val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro").item()
 
         val_loss /= len(val_dataloader)
         val_iou /= len(val_dataloader)
@@ -338,6 +346,8 @@ def evaluate_model_segmentation(
     pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = [], [], [], [], []
     object_precision, object_recall, object_f1 = [], [], []
 
+    num_classes = config["num_classes"]
+
     with torch.no_grad():
         for _, (inputs, labels, filename) in enumerate(tqdm(test_dataloader)):
             inputs = inputs.to(device, non_blocking=True)
@@ -345,32 +355,57 @@ def evaluate_model_segmentation(
 
             outputs = model(inputs)
 
-            if config["num_classes"] == 2:
-                posterior = torch.sigmoid(outputs, dim=1)
-                prediction = torch.where(posterior > 0.5, 1, 0)
+            posterior = torch.softmax(outputs, dim=1)
+
+            # Handle binary vs multi-class segmentation
+            #TODO: verify shape for posterior, prediction and prediction.cpu().numpy()[0].squeeze()
+            if num_classes == 2:
+                prediction = torch.argmax(posterior, dim=1, keepdim=True) #TODO: verify keepdim
+
+                cv2.imwrite(
+                    os.path.join(output_dir, "predictions", filename[0]),
+                    prediction.cpu().numpy()[0].squeeze().astype(np.uint8) #TODO: verify [0].squeeze()
+                )
+
+                tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
+
+                # TODO: verify reduction, https://github.com/qubvel-org/segmentation_models.pytorch/blob/main/segmentation_models_pytorch/metrics/functional.py#L256
+                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item())
+                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro-imagewise").item())
+                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro-imagewise").item())
+                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro-imagewise").item())
+
+                current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
+                pixel_dice.append(current_dice.item())
+
             else:
-                posterior = torch.softmax(outputs, dim=1)
-                prediction = torch.argmax(posterior, dim=1, keepdim=True)
+                prediction = torch.argmax(posterior, dim=1)  # (B, H, W)
 
-            cv2.imwrite(
-                os.path.join(output_dir, "predictions", filename[0]),
-                prediction.cpu().numpy()[0].squeeze().astype(np.uint8)
-            )
+                cv2.imwrite(
+                    os.path.join(output_dir, "predictions", filename[0]),
+                    prediction.cpu().numpy()[0].astype(np.uint8)
+                )
 
-            tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
+                tp, fp, fn, tn = smp.metrics.get_stats(
+                    prediction.unsqueeze(1),
+                    labels.type(torch.int64),
+                    mode='multiclass',
+                    num_classes=num_classes
+                )
 
-            pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item())
-            pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro-imagewise").item())
-            pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro-imagewise").item())
-            pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro-imagewise").item())
+                # TODO: verify reduction, refer: https://github.com/qubvel-org/segmentation_models.pytorch/blob/main/segmentation_models_pytorch/metrics/functional.py#L256
+                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro").item())
+                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro").item())
+                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro").item())
+                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro").item())
 
-            current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
-            pixel_dice.append(current_dice.item())
+                current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
+                pixel_dice.append(current_dice.mean().item())
 
-            pred_np = prediction.cpu().numpy()[0].squeeze()
+            pred_np = prediction.cpu().numpy()[0].squeeze() if num_classes == 2 else prediction.cpu().numpy()[0]
             labels_np = labels.cpu().numpy()[0].squeeze()
 
-            metrics = compute_object_metrics(labels_np, pred_np, iou_threshold=0.5)
+            metrics = compute_object_metrics(labels_np, pred_np, iou_threshold=0.5, num_classes=num_classes)
             object_precision.append(metrics['precision'])
             object_recall.append(metrics['recall'])
             object_f1.append(metrics['f1_score'])

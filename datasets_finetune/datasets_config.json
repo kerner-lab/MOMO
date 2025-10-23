@@ -75,5 +75,12 @@
       "input_size": [500, 500],
       "label_dict": {"background": 0, "boulder": 1},
       "label_dict_reverse": {"0": "background", "1": "boulder"}
+    },
+    "mb-crater_multi_seg": {
+      "num_classes": 5,
+      "task_type": "multi-class segmentation",
+      "input_size": [512, 512],
+      "label_dict": {"Background": 0, "Other": 1, "Layered": 2, "Buried": 3, "Secondary": 4},
+      "label_dict_reverse": {"0": "Background", "1": "Other", "2": "Layered", "3": "Buried", "4": "Secondary"}
     }
 }
