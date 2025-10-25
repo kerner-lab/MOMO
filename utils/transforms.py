@@ -4,12 +4,18 @@ from albumentations.pytorch import ToTensorV2
 import json
 
 
-def create_transforms(train_model, task_type, which_pretraining, is_training=True):
+def create_transforms(dataset, which_finetuning, which_pretraining, is_training=True):
 
     with open("utils/statistics.json", "r") as f:
         INSTRUMENT_STATS = json.load(f)
 
-    if which_pretraining == "ImageNet":
+    with open("datasets_finetune/datasets_config.json", "r") as f:
+        DATASETS_CONFIG = json.load(f)
+
+    if which_finetuning == "scratch_training":
+        mean = DATASETS_CONFIG[dataset]["mean"]
+        std = DATASETS_CONFIG[dataset]["std"]
+    elif which_finetuning == "imagenet_pretrained":
         mean = INSTRUMENT_STATS["ImageNet"]["mean"]
         std = INSTRUMENT_STATS["ImageNet"]["std"]
     else:

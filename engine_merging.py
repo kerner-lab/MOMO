@@ -39,8 +39,8 @@ def create_combined_encoder(
     task_vectors = []
     for instrument, checkpoint in model_combination.items():
         checkpoint_path = os.path.join(
-            output_dir, "pretraining", train_model, instrument, 
-            f"{instrument}-{checkpoint}.pth"
+            output_dir, "pretraining", train_model, f"{instrument}_True", 
+            f"checkpoint_{instrument}_True-{checkpoint}.pth"
         )
         task_vectors.append(TaskVector(pretrained_model_path, checkpoint_path))
 
@@ -55,7 +55,7 @@ def create_combined_encoder(
 
     # Apply task vector to pre-trained model
     combined_encoder = task_vector_sum.apply_to(
-        pretrained_model_path, train_model, device, scaling_coef=scaling_coef
+        pretrained_model_path, train_model, device, args, scaling_coef=scaling_coef
     ).to(device)
 
     # Save combined model

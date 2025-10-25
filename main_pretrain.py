@@ -80,10 +80,10 @@ def get_args_parser():
 
     # MAE parameters
     argparser.add_argument('--combined_loss', default=False, required=False, action='store_true', help='use combined loss')
-    argparser.add_argument('--mse_weight', type=float, default=1.0, help='weight for mse loss')
-    argparser.add_argument('--ssim_weight', type=float, default=0.15, help='weight for ssim loss')
-    argparser.add_argument('--lpips_weight', type=float, default=0.5, help='weight for lpips loss')
-    argparser.add_argument('--grad_weight', type=float, default=0.2, help='weight for gradient loss')
+    argparser.add_argument('--mse_weight', type=float, default=0.25, help='weight for mse loss')
+    argparser.add_argument('--ssim_weight', type=float, default=0.25, help='weight for ssim loss')
+    argparser.add_argument('--lpips_weight', type=float, default=0.25, help='weight for lpips loss')
+    argparser.add_argument('--grad_weight', type=float, default=0.25, help='weight for gradient loss')
 
     # Wandb parameters
     argparser.add_argument("--wandb_enabled", default=False, required=False, action="store_true",

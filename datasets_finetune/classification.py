@@ -4,6 +4,7 @@ import numpy as np
 import multiprocessing as mp
 import os
 import pandas as pd
+from PIL import Image
 
 from imblearn.over_sampling import RandomOverSampler
 from sklearn.preprocessing import LabelEncoder
@@ -44,13 +45,22 @@ class CustomDataset(Dataset):
         if "change_cls" in self.data_dir:
             image_id_before = self.image_paths[idx]
             image_id_after = self.image_paths[idx].replace("before", "after")
-            layer_before = cv2.imread(image_id_before, cv2.IMREAD_GRAYSCALE)
+            # layer_before = cv2.imread(image_id_before, cv2.IMREAD_GRAYSCALE)
+            arr = np.array(Image.open(image_id_before)).astype(np.float32)
+            arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())
+            layer_before = np.array(Image.fromarray(arr_normalized.astype(np.uint8)))
             layer_zero = np.zeros((layer_before.shape[0], layer_before.shape[1]), dtype=layer_before.dtype)
-            layer_after = cv2.imread(image_id_after, cv2.IMREAD_GRAYSCALE)
+            # layer_after = cv2.imread(image_id_after, cv2.IMREAD_GRAYSCALE)
+            arr = np.array(Image.open(image_id_after)).astype(np.float32)
+            arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())
+            layer_after = np.array(Image.fromarray(arr_normalized.astype(np.uint8)))
             image = np.stack([layer_zero, layer_after, layer_before], axis=-1)
         else:
-            image = cv2.imread(self.image_paths[idx])
-            image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            # image = cv2.imread(self.image_paths[idx])
+            # image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+            arr = np.array(Image.open(self.image_paths[idx])).astype(np.float32)
+            arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())
+            image = np.array(Image.fromarray(arr_normalized.astype(np.uint8)).convert("RGB"))
 
         if self.transform:
             transformed = self.transform(image=image)
@@ -149,6 +159,6 @@ class ClassificationDataset(BaseDataset):
             classes=np.unique(self.train_df['label']),
             y=self.train_df['label']
         )
-        class_weight_dict = dict(zip(np.unique(self.train_df['label']), class_weights))
-        print(class_weight_dict)
+        # class_weight_dict = dict(zip(np.unique(self.train_df['label']), class_weights))
+        # print(class_weight_dict)
         return class_weights

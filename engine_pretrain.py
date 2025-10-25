@@ -96,6 +96,14 @@ def model_training_vit(
         "val_loss": [], "val_mse": [], "val_ssim": [], "val_lpips": [], "val_gradient": []
     }
 
+    if args.wandb_enabled:
+        wandb.define_metric("Training/*", step_metric="train_step")
+        wandb.define_metric("Validation/*", step_metric="val_step")
+        wandb.define_metric("Training 100k/*", step_metric="global_step")
+        wandb.define_metric("Validation 100k/*", step_metric="global_step")
+
+    train_step, val_step, global_step = 0, 0, 0
+
     with tqdm(range(num_epochs), desc="Epoch") as tqdm_epoch:
 
         for epoch in tqdm_epoch:
@@ -128,12 +136,13 @@ def model_training_vit(
 
                     if args.wandb_enabled:
                         wandb.log({
-                            "Training Step Loss": loss_value,
-                            "Training Step MSE": loss_dict['mse'],
-                            "Training Step SSIM": loss_dict['ssim'],
-                            "Training Step LPIPS": loss_dict['lpips'],
-                            "Training Step Gradient": loss_dict['gradient']
-                        }, step=data_iter_step_train)
+                            "train_step": train_step,
+                            "Training/Step Loss": loss_value,
+                            "Training/Step MSE": loss_dict['mse'],
+                            "Training/Step SSIM": loss_dict['ssim'],
+                            "Training/Step LPIPS": loss_dict['lpips'],
+                            "Training/Step Gradient": loss_dict['gradient']
+                        })
                 else:
                     loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
                     current_loss = loss[0]
@@ -141,7 +150,11 @@ def model_training_vit(
                     train_loss += loss_value
 
                     if args.wandb_enabled:
-                        wandb.log({"Training Step Loss": loss_value}, step=data_iter_step_train)
+                        wandb.log({
+                            "train_step": train_step,
+                            "Training/Step Loss": loss_value
+                        })
+                train_step += 1
 
                 if not math.isfinite(loss_value):
                     print("Training Loss is {}, stopping training".format(loss_value))
@@ -181,12 +194,13 @@ def model_training_vit(
 
                                 if args.wandb_enabled:
                                     wandb.log({
-                                        "Validation Step Loss": loss_value,
-                                        "Validation Step MSE": loss_dict['mse'],
-                                        "Validation Step SSIM": loss_dict['ssim'],
-                                        "Validation Step LPIPS": loss_dict['lpips'],
-                                        "Validation Step Gradient": loss_dict['gradient']
-                                    }, step=data_iter_step_val)
+                                        "val_step": val_step,
+                                        "Validation/Step Loss": loss_value,
+                                        "Validation/Step MSE": loss_dict['mse'],
+                                        "Validation/Step SSIM": loss_dict['ssim'],
+                                        "Validation/Step LPIPS": loss_dict['lpips'],
+                                        "Validation/Step Gradient": loss_dict['gradient']
+                                    })
                             else:
                                 loss, _, _ = model(samples, mask_ratio=args.mask_ratio)
                                 current_loss = loss[0]
@@ -194,7 +208,11 @@ def model_training_vit(
                                 val_loss += loss_value
 
                                 if args.wandb_enabled:
-                                    wandb.log({"Validation Step Loss": loss_value}, step=data_iter_step_val)
+                                    wandb.log({
+                                        "val_step": val_step,
+                                        "Validation/Step Loss": loss_value
+                                    })
+                            val_step += 1
 
                             if not math.isfinite(loss_value):
                                 print("Validation Loss is {}, stopping training".format(loss_value))
@@ -236,36 +254,37 @@ def model_training_vit(
 
                     if args.wandb_enabled:
                         log_dict = {
-                            "Training Loss 100k": avg_train_loss,
-                            "Validation Loss 100k": avg_val_loss,
-                            "Epoch": epoch
+                            "Training 100k/Loss": avg_train_loss,
+                            "Validation 100k/Loss": avg_val_loss,
+                            "Epoch": epoch,
+                            "global_step": global_step
                         }
                         if args.combined_loss:
                             log_dict.update({
-                                "Training MSE 100k": avg_train_mse,
-                                "Training SSIM 100k": avg_train_ssim,
-                                "Training LPIPS 100k": avg_train_lpips,
-                                "Training Gradient 100k": avg_train_gradient,
-                                "Validation MSE 100k": avg_val_mse,
-                                "Validation SSIM 100k": avg_val_ssim,
-                                "Validation LPIPS 100k": avg_val_lpips,
-                                "Validation Gradient 100k": avg_val_gradient
+                                "Training 100k/MSE": avg_train_mse,
+                                "Training 100k/SSIM": avg_train_ssim,
+                                "Training 100k/LPIPS": avg_train_lpips,
+                                "Training 100k/Gradient": avg_train_gradient,
+                                "Validation 100k/MSE": avg_val_mse,
+                                "Validation 100k/SSIM": avg_val_ssim,
+                                "Validation 100k/LPIPS": avg_val_lpips,
+                                "Validation 100k/Gradient": avg_val_gradient
                             })
                         wandb.log(log_dict)
+                        global_step += 1
 
                     if args.combined_loss:
-                        print(f"Epoch [{epoch}/{num_epochs}]")
+                        print(f"Epoch [{epoch+1}/{num_epochs}]")
                         print(f"  Train Loss: {avg_train_loss:.4f} | Train - MSE: {avg_train_mse:.4f}, SSIM: {avg_train_ssim:.4f}, LPIPS: {avg_train_lpips:.4f}, Gradient: {avg_train_gradient:.4f}")
                         print(f"  Val Loss: {avg_val_loss:.4f} | Val - MSE: {avg_val_mse:.4f}, SSIM: {avg_val_ssim:.4f}, LPIPS: {avg_val_lpips:.4f}, Gradient: {avg_val_gradient:.4f}\n")
                     else:
-                        print(f"Epoch [{epoch}/{num_epochs}] Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
+                        print(f"Epoch [{epoch+1}/{num_epochs}] Train Loss: {avg_train_loss:.4f}, Val Loss: {avg_val_loss:.4f}")
 
                     model.train(True)
                     optimizer.zero_grad()
                     train_loss, train_mse, train_ssim, train_lpips, train_gradient = 0, 0, 0, 0, 0
 
                     misc.save_model(args=args, output_dir=output_dir, save_name=f"checkpoint_{args.name_of_run}-{epoch}-{samples_seen_train}", model=model)
-                    misc.save_model(args=args, output_dir=output_dir, save_name="last", model=model)
+                    misc.save_model(args=args, output_dir=output_dir, save_name=f"checkpoint_{args.name_of_run}-last", model=model)
 
     print(f"Training metrics saved to {metrics_file}")
-

@@ -4,6 +4,7 @@ import cv2
 import numpy as np
 import os
 import pandas as pd
+from PIL import Image
 import tifffile
 from typing import Dict, Any
 
@@ -43,8 +44,13 @@ class CustomDataset(Dataset):
             image = tifffile.imread(image_path)[:, :, [2, 1, 0]]
             mask = tifffile.imread(mask_path)
         else:
-            image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            # image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
+            # mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
+            image = Image.open(image_path)
+
+        arr = np.array(image).astype(np.float32)
+        arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())
+        image = np.array(Image.fromarray(arr_normalized.astype(np.uint8)).convert("RGB"))
 
         if self.transform:
             transformed = self.transform(image=image, mask=mask)

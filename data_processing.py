@@ -36,15 +36,13 @@ class CustomImageDataset(Dataset):
         # Load image
         arr = np.array(Image.open(image_path)).astype(np.float32)
         arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())
-        if self.if_pretrained:
-            image = Image.fromarray(arr_normalized.astype(np.uint8)).convert("RGB")
-        else:
-            image = Image.fromarray(arr_normalized.astype(np.uint8)).convert("L")
+        image = Image.fromarray(arr_normalized.astype(np.uint8)).convert("RGB")
 
         # Apply transforms
         if self.transform is not None:
             image = self.transform(image)
 
+        # Print min max of image
         return image, gmom_unit
 
 

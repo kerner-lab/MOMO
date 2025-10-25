@@ -88,7 +88,7 @@ class TaskVector():
         return TaskVector(vector=new_vector)
 
 
-    def apply_to(self, pretrained_checkpoint, train_model, device, scaling_coef=1.0):
+    def apply_to(self, pretrained_checkpoint, train_model, device, args, scaling_coef=1.0):
 
         """ Apply a task vector to a pretrained model. """
         with torch.no_grad():
@@ -96,7 +96,8 @@ class TaskVector():
                 train_model=train_model,
                 model_unit="encoder",
                 device=device,
-                if_pretrained=False
+                if_pretrained=False,
+                args=args
             )
             # Load checkpoint and extract model state dict
             pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu')
