@@ -13,6 +13,7 @@ from utils.pos_embed import interpolate_pos_embed
 
 from models.unetformer import Segmentation_ViT_UNetFormer
 
+
 class Classification(nn.Module):
 
     def __init__(self, train_model, if_pretrained, config, device):
@@ -86,128 +87,15 @@ class Segmentation(nn.Module):
         return x
 
 
-class Segmentation_ViT(nn.Module):
 
-    def __init__(self, encoder, encoder_output_dim):
-        super(Segmentation_ViT, self).__init__()
-        self.encoder = encoder
-        self.encoder_output_dim = encoder_output_dim
-        
-        # Decoder dimensions
-        decoder_base_channels = 256
-        self.decoder_base_channels = decoder_base_channels
-        num_output_classes = 1
-        
-        # Dynamic linear projections for different input sizes (from attached code)
-        self.projection_layers = nn.ModuleDict()
-        
-        # Spatial projection after linear projection
-        self.spatial_projection = nn.Conv2d(encoder_output_dim, decoder_base_channels, kernel_size=1)
-        
-        # Decoder stages (your architecture)
-        self.stage1 = self._make_decoder_stage(decoder_base_channels, decoder_base_channels // 2)
-        self.stage2 = self._make_decoder_stage(decoder_base_channels // 2, decoder_base_channels // 4)
-        self.stage3 = self._make_decoder_stage(decoder_base_channels // 4, decoder_base_channels // 8)
-        self.stage4 = self._make_decoder_stage(decoder_base_channels // 8, decoder_base_channels // 16)
-        
-        # Final prediction layer
-        self.final_conv = nn.Conv2d(decoder_base_channels // 16, num_output_classes, kernel_size=1)
-
-    def _make_decoder_stage(self, in_channels, out_channels):
-        return nn.Sequential(
-            nn.ConvTranspose2d(in_channels, out_channels, kernel_size=2, stride=2),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True),
-            nn.Conv2d(out_channels, out_channels, kernel_size=3, padding=1),
-            nn.BatchNorm2d(out_channels),
-            nn.ReLU(inplace=True)
-        )
-    
-    def _get_feature_map_size_and_stages(self, input_size):
-        """From attached code"""
-        if input_size <= 128:
-            initial_feature_size = 8
-            num_stages = 4
-        elif input_size <= 256:
-            initial_feature_size = 16
-            num_stages = 4
-        elif input_size <= 512:
-            initial_feature_size = 32
-            num_stages = 4
-        else:
-            initial_feature_size = 32
-            num_stages = 5
-            
-        return initial_feature_size, num_stages
-    
-    def _get_or_create_projection(self, input_size):
-        """From attached code - creates dynamic linear projection"""
-        size_key = str(input_size)
-        
-        if size_key not in self.projection_layers:
-            initial_feature_size, _ = self._get_feature_map_size_and_stages(input_size)
-            projected_feature_dim = initial_feature_size * initial_feature_size * self.encoder_output_dim
-            
-            self.projection_layers[size_key] = nn.Linear(
-                self.encoder_output_dim, projected_feature_dim
-            ).to(next(self.parameters()).device)
-            
-        return self.projection_layers[size_key]
-
-    @property
-    def blocks(self):
-        return self.encoder.blocks
-
-    def no_weight_decay(self):
-        return self.encoder.no_weight_decay()
-
-    def forward(self, x):
-        B, C, H, W = x.shape
-        
-        # Get encoder features
-        features = self.encoder(x)  # Assume [B, C] for global pooled encoder
-        
-        # Get appropriate projection layer and feature map size
-        initial_feature_size, num_stages = self._get_feature_map_size_and_stages(H)
-        projection_layer = self._get_or_create_projection(H)
-        
-        # Project to spatial feature maps using linear layer
-        features = projection_layer(features)
-        features = features.reshape(B, self.encoder_output_dim, 
-                                   initial_feature_size, initial_feature_size)
-        
-        # Project to decoder channels
-        x = self.spatial_projection(features)
-        
-        # Apply decoder stages based on needed upsampling
-        if num_stages >= 1:
-            x = self.stage1(x)
-        if num_stages >= 2:
-            x = self.stage2(x)
-        if num_stages >= 3:
-            x = self.stage3(x)
-        if num_stages >= 4:
-            x = self.stage4(x)
-        
-        # Final prediction
-        x = self.final_conv(x)
-        
-        # Ensure output matches input size exactly
-        if x.shape[-2:] != (H, W):
-            x = F.interpolate(x, size=(H, W), mode="bilinear", align_corners=False)
-        
-        return x
-
-
-
-def create_finetune_model(train_model, which_pretraining, config, pretrained_path, device):
+def create_finetune_model(train_model, which_finetuning, config, pretrained_path, device):
 
     if "classification" in config["task_type"]:
 
-        if which_pretraining == "scratch_training":
+        if which_finetuning == "scratch_training":
             model = Classification(train_model=train_model, if_pretrained=False, config=config, device=device)
 
-        elif which_pretraining == "imagenet_pretrained":
+        elif which_finetuning == "imagenet_pretrained":
             model = Classification(train_model=train_model, if_pretrained=True, config=config, device=device)
 
         else:
@@ -222,10 +110,10 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
 
     if "segmentation" in config["task_type"]:
 
-        if which_pretraining == "scratch_training":
+        if which_finetuning == "scratch_training":
             model = Segmentation(train_model=train_model, if_pretrained=False, config=config, device=device)
 
-        elif which_pretraining == "imagenet_pretrained":
+        elif which_finetuning == "imagenet_pretrained":
             model = Segmentation(train_model=train_model, if_pretrained=True, config=config, device=device)
 
         else:
@@ -239,45 +127,49 @@ def create_finetune_model(train_model, which_pretraining, config, pretrained_pat
         return model
 
 
-def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_pool, config, pretrained_path, device, args):
+def create_finetune_model_vit(train_model, which_finetuning, drop_path, global_pool, config, pretrained_path, device, args):
 
-    if "vit-b" in train_model:
+    # Define and embedding dimension of the encoder
+    if train_model == "vit-t-16":
+        encoder_output_dim = 192
+    elif train_model == "vit-s-16":
+        encoder_output_dim = 384
+    elif train_model == "vit-b-16":
         encoder_output_dim = 768
-    elif "vit-l" in train_model:
+    elif train_model == "vit-l-16":
         encoder_output_dim = 1024
     else:
-        raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
+        raise ValueError(f"Unknown model type: {train_model}. Available types: vit-t-16, vit-s-16, vit-b-16, vit-l-16")
 
-    img_size = config["input_size"][0]
-    if train_model == "vit-b-16":
+    # Define model
+    if train_model == "vit-t-16":
         model = vit_customized(
-            img_size=img_size, patch_size=16, in_chans=3,
-            embed_dim=encoder_output_dim, depth=12, num_heads=12,
+            img_size=config["input_size"][0], patch_size=16, in_chans=3,
+            embed_dim=encoder_output_dim, depth=12, num_heads=3,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
-    elif train_model == "vit-b-32":
+    elif train_model == "vit-s-16":
         model = vit_customized(
-            img_size=img_size, patch_size=32, in_chans=3,
+            img_size=config["input_size"][0], patch_size=16, in_chans=3,
+            embed_dim=encoder_output_dim, depth=12, num_heads=6,
+            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
+        )
+    elif train_model == "vit-b-16":
+        model = vit_customized(
+            img_size=config["input_size"][0], patch_size=16, in_chans=3,
             embed_dim=encoder_output_dim, depth=12, num_heads=12,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     elif train_model == "vit-l-16":
         model = vit_customized(
-            img_size=img_size, patch_size=16, in_chans=3,
-            embed_dim=encoder_output_dim, depth=24, num_heads=16,
-            drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
-        )
-    elif train_model == "vit-l-32":
-        model = vit_customized(
-            img_size=img_size, patch_size=32, in_chans=3,
+            img_size=config["input_size"][0], patch_size=16, in_chans=3,
             embed_dim=encoder_output_dim, depth=24, num_heads=16,
             drop_path_rate=drop_path, global_pool=global_pool, num_classes=config["num_classes"]
         )
     else:
         raise ValueError(f"Unknown model type: {train_model}. Available types: vit-b-16, vit-b-32, vit-l-16, vit-l-32")
-        return
 
-    if which_pretraining == "scratch_training":
+    if which_finetuning == "scratch_training":
         pass
 
     else:
@@ -297,22 +189,51 @@ def create_finetune_model_vit(train_model, which_pretraining, drop_path, global_
         # load pre-trained model
         msg = model.load_state_dict(checkpoint_model, strict=False)
 
-        if not which_pretraining == "evaluation":
-            if global_pool:
-                assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
-            else:
-                assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
+        if global_pool:
+            assert set(msg.missing_keys) == {'head.weight', 'head.bias', 'fc_norm.weight', 'fc_norm.bias'}
+        else:
+            assert set(msg.missing_keys) == {'head.weight', 'head.bias'}
 
         # manually initialize fc layer
         trunc_normal_(model.head.weight, std=2e-5)
 
     if "classification" in config["task_type"]:
+        if which_finetuning in ["imagenet_pretrained", "finetuning"]:
+            for param in model.parameters():
+                param.requires_grad = False
+
+            if hasattr(model, 'head'):
+                for param in model.head.parameters():
+                    param.requires_grad = True
+            if hasattr(model, 'fc_norm'):
+                for param in model.fc_norm.parameters():
+                    param.requires_grad = True
+
         model = model.to(device)
         return model
 
     if "segmentation" in config["task_type"]:
         model.head = nn.Identity()
-        # model = Segmentation_ViT(model, encoder_output_dim)
+        if which_finetuning in ["imagenet_pretrained", "finetuning"]:
+            for param in model.parameters():
+                param.requires_grad = False
         model = Segmentation_ViT_UNetFormer(encoder=model, encoder_output_dim=encoder_output_dim, num_classes=config["num_classes"], decoder_channels=64, window_size=8, dropout=0.1)
+
+        ''' TODO
+        # Ensure decoder parameters remain trainable (they should be by default)
+        # But let's explicitly check - decoder parameters include:
+        # - projection_layers (ModuleDict)
+        # - spatial_projection
+        # - stage1, stage2, stage3, stage4
+        # - final_conv
+        decoder_params = []
+        for name, param in model.named_parameters():
+            if not name.startswith('encoder'):  # Everything that's not the encoder
+                decoder_params.append(param)
+
+        for param in decoder_params:
+            param.requires_grad = True
+        '''
+
         model = model.to(device)
         return model
