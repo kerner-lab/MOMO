@@ -202,13 +202,13 @@ def load_model(args, model, optimizer, loss_scaler):
                 args.vit_pretrained_checkpoint_path, map_location='cpu', check_hash=True)
         else:
             if "vit-t" in args.train_model:
-                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_tiny_patch16_224.pth"), map_location='cpu')
+                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_tiny_patch16_224.pth"), map_location='cpu', weights_only=False)
             elif "vit-s" in args.train_model:
-                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_small_patch16_224.pth"), map_location='cpu')
+                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_small_patch16_224.pth"), map_location='cpu', weights_only=False)
             elif "vit-b" in args.train_model:
-                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_base_patch16_224.pth"), map_location='cpu')
+                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_base_patch16_224.pth"), map_location='cpu', weights_only=False)
             else:
-                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_large_patch16_224.pth"), map_location='cpu')
+                checkpoint = torch.load(os.path.join(args.vit_pretrained_checkpoint_path, "timm_vit_large_patch16_224.pth"), map_location='cpu', weights_only=False)
 
         model.load_state_dict(checkpoint['model'], strict=False)
         print("Resume checkpoint %s" % args.vit_pretrained_checkpoint_path)

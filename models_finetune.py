@@ -101,12 +101,12 @@ def create_finetune_model(train_model, which_finetuning, config, pretrained_path
         else:
             model = Classification(train_model=train_model, if_pretrained=False, config=config, device=device)
             # Load pre-trained weights if provided
-            state_dict = torch.load(pretrained_path)
+            state_dict = torch.load(pretrained_path, map_location='cpu', weights_only=False)
             if isinstance(state_dict, dict) and 'state_dict' in state_dict:
                 state_dict = state_dict['state_dict']
             model.encoder.load_state_dict(state_dict, strict=False)
 
-        return model
+        return model.to(device)
 
     if "segmentation" in config["task_type"]:
 
@@ -119,15 +119,15 @@ def create_finetune_model(train_model, which_finetuning, config, pretrained_path
         else:
             model = Segmentation(train_model=train_model, if_pretrained=False, config=config, device=device)
             # Load pre-trained weights if provided
-            state_dict = torch.load(pretrained_path)
+            state_dict = torch.load(pretrained_path, map_location='cpu', weights_only=False)
             if isinstance(state_dict, dict) and 'state_dict' in state_dict:
                 state_dict = state_dict['state_dict']
             model.encoder.load_state_dict(state_dict, strict=False)
 
-        return model
+        return model.to(device)
 
 
-def create_finetune_model_vit(train_model, which_finetuning, drop_path, global_pool, config, pretrained_path, device, args):
+def create_finetune_model_vit(train_model, which_finetuning, drop_path, global_pool, config, pretrained_path, finetuning_type, device, args):
 
     # Define and embedding dimension of the encoder
     if train_model == "vit-t-16":
@@ -173,7 +173,7 @@ def create_finetune_model_vit(train_model, which_finetuning, drop_path, global_p
         pass
 
     else:
-        checkpoint = torch.load(pretrained_path, map_location='cpu')
+        checkpoint = torch.load(pretrained_path, map_location='cpu', weights_only=False)
 
         print("\nLoad pre-trained checkpoint from: %s" % pretrained_path)
         checkpoint_model = checkpoint['model']
@@ -198,25 +198,28 @@ def create_finetune_model_vit(train_model, which_finetuning, drop_path, global_p
         trunc_normal_(model.head.weight, std=2e-5)
 
     if "classification" in config["task_type"]:
-        if which_finetuning in ["imagenet_pretrained", "finetuning"]:
-            for param in model.parameters():
-                param.requires_grad = False
+        if finetuning_type == "lp":
+            if which_finetuning in ["imagenet_pretrained", "finetuning"]:
+                for param in model.parameters():
+                    param.requires_grad = False
 
-            if hasattr(model, 'head'):
-                for param in model.head.parameters():
-                    param.requires_grad = True
-            if hasattr(model, 'fc_norm'):
-                for param in model.fc_norm.parameters():
-                    param.requires_grad = True
+                if hasattr(model, 'head'):
+                    for param in model.head.parameters():
+                        param.requires_grad = True
+                if hasattr(model, 'fc_norm'):
+                    for param in model.fc_norm.parameters():
+                        param.requires_grad = True
 
         model = model.to(device)
         return model
 
     if "segmentation" in config["task_type"]:
         model.head = nn.Identity()
-        if which_finetuning in ["imagenet_pretrained", "finetuning"]:
-            for param in model.parameters():
-                param.requires_grad = False
+        if finetuning_type == "lp":
+            if which_finetuning in ["imagenet_pretrained", "finetuning"]:
+                for param in model.parameters():
+                    param.requires_grad = False
+
         model = Segmentation_ViT_UNetFormer(encoder=model, encoder_output_dim=encoder_output_dim, num_classes=config["num_classes"], decoder_channels=64, window_size=8, dropout=0.1)
 
         ''' TODO

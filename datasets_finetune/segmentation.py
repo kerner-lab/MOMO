@@ -45,8 +45,8 @@ class CustomDataset(Dataset):
             mask = tifffile.imread(mask_path)
         else:
             # image = cv2.cvtColor(cv2.imread(image_path), cv2.COLOR_BGR2RGB)
-            # mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
             image = Image.open(image_path)
+            mask = cv2.imread(mask_path, cv2.IMREAD_GRAYSCALE)
 
         arr = np.array(image).astype(np.float32)
         arr_normalized = 255 * (arr - arr.min()) / (arr.max() - arr.min())

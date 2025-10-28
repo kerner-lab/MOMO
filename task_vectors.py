@@ -36,8 +36,8 @@ class TaskVector():
             assert pretrained_checkpoint is not None and finetuned_checkpoint is not None
             with torch.no_grad():
                 # Load checkpoints and extract model state dicts
-                pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu')
-                finetuned_loaded = torch.load(finetuned_checkpoint, map_location='cpu')
+                pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu', weights_only=False)
+                finetuned_loaded = torch.load(finetuned_checkpoint, map_location='cpu', weights_only=False)
  
                 # Extract model state dicts based on your checkpoint format
                 pretrained_state_dict = self._extract_model_state_dict(pretrained_loaded)
@@ -100,7 +100,7 @@ class TaskVector():
                 args=args
             )
             # Load checkpoint and extract model state dict
-            pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu')
+            pretrained_loaded = torch.load(pretrained_checkpoint, map_location='cpu', weights_only=False)
             pretrained_state_dict = self._extract_model_state_dict(pretrained_loaded)
             new_state_dict = {}
             for key in pretrained_state_dict:

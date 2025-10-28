@@ -40,7 +40,7 @@ def get_args_parser():
                            choices=["mb-frost_cls", "mb-landmark_cls", "mb-domars16k", "mb-atmospheric_dust_cls_edr", "mb-atmospheric_dust_cls_rdr", "mb-change_cls_ctx", "mb-change_cls_hirise",
                                     "mb-conequest_seg", "mb-crater_binary_seg", "mb-mmls", "mb-boulder_seg", "mb-crater_multi_seg"])
     argparser.add_argument("--balance_data", default="default", required=False, type=str,
-                           choices=["loss_reweight", "under_sample", "over_sample"])
+                           choices=["default", "loss_reweight", "under_sample", "over_sample"])
     argparser.add_argument("--few_shot", type=str, default=None, required=False,
                            help="Few shot dataset name only for classification tasks", choices=["1_shot", "2_shot", "5_shot", "10_shot", "15_shot", "20_shot"])
     argparser.add_argument("--partition", type=str, default=None, required=False,
@@ -53,6 +53,9 @@ def get_args_parser():
     argparser.add_argument("--which_pretraining", type=str, default="HiRISE, CTX, THEMIS", required=False,
                            help="For finetuning, please provide the name of the pretrained model",
                            choices=["HiRISE", "CTX", "THEMIS", "HiRISE, CTX, THEMIS"])
+    argparser.add_argument("--finetuning_type", type=str, default="lp", required=False,
+                           help="For finetuning, please provide the type of finetuning: lp for linear probing, ft for full finetuning",
+                           choices=["lp", "ft"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
 
@@ -147,7 +150,7 @@ def main(args):
 
     ### Create model
     if "vit" in args.train_model:
-        model = create_finetune_model_vit(args.train_model, args.which_finetuning, args.drop_path, args.global_pool, config, args.encoder_checkpoint, device, args)
+        model = create_finetune_model_vit(args.train_model, args.which_finetuning, args.drop_path, args.global_pool, config, args.encoder_checkpoint, args.finetuning_type, device, args)
     else:
         model = create_finetune_model(args.train_model, args.which_finetuning, config, args.encoder_checkpoint, device)
     model = model.to(device)
