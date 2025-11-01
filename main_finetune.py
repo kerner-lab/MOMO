@@ -49,15 +49,15 @@ def get_args_parser():
 
     # Finetuning parameters
     argparser.add_argument("--which_finetuning", type=str, default=None, required=True,
-                           choices=["imagenet_pretrained", "scratch_training", "finetuning"])
-    argparser.add_argument("--which_pretraining", type=str, default="HiRISE, CTX, THEMIS", required=False,
-                           help="For finetuning, please provide the name of the pretrained model",
-                           choices=["HiRISE", "CTX", "THEMIS", "HiRISE, CTX, THEMIS"])
-    argparser.add_argument("--finetuning_type", type=str, default="lp", required=False,
+                           choices=["imagenet_pretrained", "scratch_training", "checkpoint"])
+    argparser.add_argument("--finetuning_type", type=str, default="ft", required=False,
                            help="For finetuning, please provide the type of finetuning: lp for linear probing, ft for full finetuning",
                            choices=["lp", "ft"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
+    argparser.add_argument("--normalize", type=str, default="HiRISE, CTX, THEMIS", required=False,
+                           help="For finetuning, please provide the name of the pretrained model",
+                           choices=["HiRISE", "CTX", "THEMIS", "HiRISE, CTX, THEMIS"])
 
     # Paths
     argparser.add_argument("--output_dir", type=str, default=None, required=False,
@@ -140,8 +140,8 @@ def main(args):
     config["balance"] = args.balance_data if args.balance_data is not None else "default"
 
     ### Create transforms, datasets and dataloaders
-    train_transform = create_transforms(args.dataset, args.which_finetuning, args.which_pretraining, is_training=True)
-    val_transform = create_transforms(args.dataset, args.which_finetuning, args.which_pretraining, is_training=False)
+    train_transform = create_transforms(args.dataset, args.which_finetuning, args.normalize, is_training=True)
+    val_transform = create_transforms(args.dataset, args.which_finetuning, args.normalize, is_training=False)
 
     dataset = DatasetFactory.create_dataset(config, train_transform, val_transform, args)
     train_dataloader, no_of_samples = dataset.get_train_dataloader()
@@ -265,12 +265,12 @@ def main(args):
             result_df = pd.read_csv(result_csv_path)
         else:
             result_df = pd.DataFrame(columns=[
-                "Downstream Task", "Training type", "Train Model", "Pre-training configuration", "balance_data", "data_configuration", "no_of_training_samples",
+                "Downstream Task",  "Train Model", "Training type", "Pre-training configuration", "Finetuning type", "balance_data", "data_configuration", "no_of_training_samples",
                 "Accuracy", "Precision", "Recall", "F1-Score", "Top-1 Accuracy", "Top-5 Accuracy", "batch_size", "num_epochs", "patience",
                 "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay", "warmup_epochs", "max_norm", "accum_iter", "output_folder"
             ])
         current_result = [
-            args.dataset, args.which_finetuning, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+            args.dataset, args.train_model, args.which_finetuning, pretraining_configuration, args.finetuning_type, args.balance_data, args.data_configuration, no_of_samples,
             round(eval_accuracy, 4), round(eval_precision, 4), round(eval_recall, 4), round(eval_f1score, 4),
             round(eval_acc1, 4), round(eval_acc5, 4), args.batch_size, args.num_epochs, args.patience,
             args.drop_path, args.global_pool, args.learning_rate, args.min_lr, args.weight_decay, args.layer_decay,
@@ -304,16 +304,17 @@ def main(args):
             result_df = pd.read_csv(result_csv_path)
         else:
             result_df = pd.DataFrame(columns=[
-                "Downstream Task", "Training type", "Train Model", "Pre-training configuration", "balance_data", "data_configuration", "no_of_training_samples",
+                "Downstream Task", "Train Model", "Training type", "Pre-training configuration", "Finetuning type", "balance_data", "data_configuration", "no_of_training_samples",
                 "Pixel IoU", "Pixel Accuracy", "Pixel Precision", "Pixel Recall", "Pixel Dice", "Object Precision", "Object Recall", "Object F1-Score",
                 "batch_size", "num_epochs", "patience", "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay",
-                "warmup_epochs", "max_norm", "accum_iter", "output_folder"
+                "warmup_epochs", "max_norm", "accum_iter", "weight_dice", "weight_ce", "weight_boundary", "use_positive_only_conequest", "output_folder"
             ])
         current_result = [
-            args.dataset, args.which_finetuning, args.train_model, pretraining_configuration, args.balance_data, args.data_configuration, no_of_samples,
+            args.dataset, args.train_model, args.which_finetuning, pretraining_configuration, args.finetuning_type, args.balance_data, args.data_configuration, no_of_samples,
             pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall, object_f1,
             args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.learning_rate, args.min_lr,
-            args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, current_output_folder
+            args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, args.weight_dice, args.weight_ce, args.weight_boundary, args.use_positive_only_conequest,
+            current_output_folder
         ]
         result_df.loc[len(result_df)] = current_result
         result_df.to_csv(result_csv_path, index=False)

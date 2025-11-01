@@ -4,7 +4,7 @@ from albumentations.pytorch import ToTensorV2
 import json
 
 
-def create_transforms(dataset, which_finetuning, which_pretraining, is_training=True):
+def create_transforms(dataset, which_finetuning, normalize, is_training=True):
 
     with open("utils/statistics.json", "r") as f:
         INSTRUMENT_STATS = json.load(f)
@@ -19,8 +19,8 @@ def create_transforms(dataset, which_finetuning, which_pretraining, is_training=
         mean = INSTRUMENT_STATS["ImageNet"]["mean"]
         std = INSTRUMENT_STATS["ImageNet"]["std"]
     else:
-        mean = INSTRUMENT_STATS[which_pretraining]["mean"]
-        std = INSTRUMENT_STATS[which_pretraining]["std"]
+        mean = INSTRUMENT_STATS[normalize]["mean"]
+        std = INSTRUMENT_STATS[normalize]["std"]
 
     if is_training:
         return A.Compose([
