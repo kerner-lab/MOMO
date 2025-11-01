@@ -236,7 +236,8 @@ def training_model_segmentation(model: torch.nn.Module,
                 train_dataloader: Iterable, val_dataloader: Iterable,
                 optimizer: torch.optim.Optimizer, device: torch.device,
                 num_classes: int, output_dir: str, patience: int,
-                scaler: torch.cuda.amp.GradScaler, name_of_run: str, criterion, args):
+                scaler: torch.cuda.amp.GradScaler, name_of_run: str,
+                criterion, class_weights, args):
 
     best_val_loss = float('inf')
     patience_counter = 0
@@ -291,7 +292,7 @@ def training_model_segmentation(model: torch.nn.Module,
                     tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
                     val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item()
                 else:
-                    prediction = torch.argmax(posterior, dim=1)  # (B, H, W)
+                    prediction = torch.argmax(posterior, dim=1)
                     # For multi-class, we need to one-hot encode or use proper shape
                     tp, fp, fn, tn = smp.metrics.get_stats(
                         prediction.unsqueeze(1),
@@ -299,7 +300,7 @@ def training_model_segmentation(model: torch.nn.Module,
                         mode='multiclass',
                         num_classes=num_classes
                     )
-                    val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro").item()
+                    val_iou += smp.metrics.iou_score(tp, fp, fn, tn, reduction="weighted-imagewise", class_weights=class_weights).item()
 
         val_loss /= len(val_dataloader)
         val_iou /= len(val_dataloader)
@@ -336,7 +337,7 @@ def training_model_segmentation(model: torch.nn.Module,
 def evaluate_model_segmentation(
     model: torch.nn.Module, test_dataloader: Iterable,
     device: torch.device, output_dir: str,
-    config: dict, args):
+    config: dict, class_weights, args):
 
     model.to(device)
     model.eval()
@@ -355,55 +356,72 @@ def evaluate_model_segmentation(
 
             outputs = model(inputs)
 
-            posterior = torch.softmax(outputs, dim=1)
+            posterior = torch.softmax(outputs, dim=1)  # (B, num_classes, H, W)
 
             # Handle binary vs multi-class segmentation
-            #TODO: verify shape for posterior, prediction and prediction.cpu().numpy()[0].squeeze()
             if num_classes == 2:
-                prediction = torch.argmax(posterior, dim=1, keepdim=True) #TODO: verify keepdim
-
-                cv2.imwrite(
-                    os.path.join(output_dir, "predictions", filename[0]),
-                    prediction.cpu().numpy()[0].squeeze().astype(np.uint8) #TODO: verify [0].squeeze()
-                )
-
-                tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
-
-                # TODO: verify reduction, https://github.com/qubvel-org/segmentation_models.pytorch/blob/main/segmentation_models_pytorch/metrics/functional.py#L256
-                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise").item())
-                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro-imagewise").item())
-                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro-imagewise").item())
-                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro-imagewise").item())
-
-                current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
-                pixel_dice.append(current_dice.item())
-
-            else:
-                prediction = torch.argmax(posterior, dim=1)  # (B, H, W)
+                prediction = torch.argmax(posterior, dim=1, keepdim=True)  # (B, 1, H, W)
 
                 cv2.imwrite(
                     os.path.join(output_dir, "predictions", filename[0]),
                     prediction.cpu().numpy()[0].astype(np.uint8)
                 )
 
+                tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')
+
+                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro-imagewise", class_weights=class_weights).item())
+                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro-imagewise", class_weights=class_weights).item())
+                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro-imagewise", class_weights=class_weights).item())
+                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro-imagewise", class_weights=class_weights).item())
+
+                current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
+                pixel_dice.append(current_dice.item())
+
+                # For object metrics
+                pred_np = prediction.cpu().numpy()[0].squeeze()
+                labels_np = labels.cpu().numpy()[0].squeeze()
+
+            else:
+                # Get class predictions (B, H, W)
+                prediction = torch.argmax(posterior, dim=1)
+
+                cv2.imwrite(
+                    os.path.join(output_dir, "predictions", filename[0]),
+                    prediction.cpu().numpy()[0].astype(np.uint8)
+                )
+                
+                # Ensure labels are in correct format (B, H, W) with class indices
+                if labels.dim() == 4:
+                    if labels.shape[1] == num_classes:
+                        # Labels are one-hot encoded, convert to indices
+                        labels_indices = torch.argmax(labels, dim=1)
+                    elif labels.shape[1] == 1:
+                        # Labels are (B, 1, H, W), squeeze to (B, H, W)
+                        labels_indices = labels.squeeze(1)
+                    else:
+                        raise ValueError(f"Unexpected labels shape: {labels.shape}")
+                else:
+                    # Labels are already (B, H, W)
+                    labels_indices = labels
+
                 tp, fp, fn, tn = smp.metrics.get_stats(
-                    prediction.unsqueeze(1),
-                    labels.type(torch.int64),
+                    prediction.long(),
+                    labels_indices.type(torch.int64),
                     mode='multiclass',
                     num_classes=num_classes
                 )
 
-                # TODO: verify reduction, refer: https://github.com/qubvel-org/segmentation_models.pytorch/blob/main/segmentation_models_pytorch/metrics/functional.py#L256
-                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="micro").item())
-                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="micro").item())
-                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="micro").item())
-                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="micro").item())
+                pixel_iou.append(smp.metrics.iou_score(tp, fp, fn, tn, reduction="weighted-imagewise", class_weights=class_weights).item())
+                pixel_accuracy.append(smp.metrics.accuracy(tp, fp, fn, tn, reduction="weighted-imagewise", class_weights=class_weights).item())
+                pixel_recall.append(smp.metrics.recall(tp, fp, fn, tn, reduction="weighted-imagewise", class_weights=class_weights).item())
+                pixel_precision.append(smp.metrics.precision(tp, fp, fn, tn, reduction="weighted-imagewise", class_weights=class_weights).item())
 
                 current_dice = (2 * tp) / ((2 * tp) + fp + fn + 1e-8)
                 pixel_dice.append(current_dice.mean().item())
 
-            pred_np = prediction.cpu().numpy()[0].squeeze() if num_classes == 2 else prediction.cpu().numpy()[0]
-            labels_np = labels.cpu().numpy()[0].squeeze()
+                # For object metrics
+                pred_np = prediction.cpu().numpy()[0]
+                labels_np = labels_indices.cpu().numpy()[0]
 
             metrics = compute_object_metrics(labels_np, pred_np, iou_threshold=0.5, num_classes=num_classes)
             object_precision.append(metrics['precision'])

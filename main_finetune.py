@@ -189,8 +189,8 @@ def main(args):
         else:
             criterion = nn.CrossEntropyLoss()
     if "segmentation" in config["task_type"]:
+        class_weights = compute_class_weights(train_dataloader, config["num_classes"])
         if args.balance_data == "loss_reweight":
-            class_weights = compute_class_weights(train_dataloader, config["num_classes"])
             criterion = WeightedCombinedLoss(
                 num_classes=config["num_classes"],
                 class_weights=class_weights,
@@ -285,12 +285,13 @@ def main(args):
             model, train_dataloader, val_dataloader,
             optimizer, device, config["num_classes"],
             output_dir, args.patience,
-            scaler, args.name_of_run, criterion, args
+            scaler, args.name_of_run, criterion,
+            class_weights, args
         )
         pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1 = evaluate_model_segmentation(
             model=model, test_dataloader=test_dataloader,
             device=device, output_dir=output_dir,
-            config=config, args=args
+            config=config, class_weights=class_weights, args=args
         )
 
         ### Save segmentation results
