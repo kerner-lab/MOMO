@@ -119,7 +119,7 @@ def main(args):
             raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
         pretraining_configuration = "-"
         args.name_of_run = f"{args.which_finetuning}_{args.balance_data}"
-    elif args.which_finetuning == "finetuning":
+    elif args.which_finetuning == "checkpoint":
         assert args.encoder_checkpoint is not None, "Path of pretrained encoder checkpoint must be provided for finetuning."
         path_parts = args.encoder_checkpoint.split("/")
         checkpoint_name, type_of_model = path_parts[-1], path_parts[-2]
@@ -173,6 +173,7 @@ def main(args):
         args.data_configuration = "full"
     os.makedirs(output_dir, exist_ok=True)
     os.makedirs(metrics_dir, exist_ok=True)
+    os.makedirs("results", exist_ok=True)
     print(f"Output directory: {output_dir}\n")
 
     ### Save arguments as JSON
