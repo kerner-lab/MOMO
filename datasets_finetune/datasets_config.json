@@ -102,6 +102,8 @@
       "num_classes": 5,
       "task_type": "multi-class segmentation",
       "input_size": [512, 512],
+      "mean": [0.48823972, 0.48823972, 0.48823972],
+      "std": [0.12821897, 0.12821897, 0.12821897],
       "label_dict": {"Background": 0, "Other": 1, "Layered": 2, "Buried": 3, "Secondary": 4},
       "label_dict_reverse": {"0": "Background", "1": "Other", "2": "Layered", "3": "Buried", "4": "Secondary"}
     }
