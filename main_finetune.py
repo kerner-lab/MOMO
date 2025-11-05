@@ -26,6 +26,9 @@ torch.backends.cudnn.benchmark = False
 torch.set_warn_always(False)
 
 
+# python main_finetune.py --data_dir /data/hkerner/mpurohi3/MarsBench/NewDatasets --dataset mb-mmls --balance_data loss_reweight --which_finetuning scratch_training --output_dir /scratch/bgajera2/Mirali/ --batch_size 32 --num_epochs 1
+
+
 def get_args_parser():
 
     argparser = argparse.ArgumentParser(description="Fine-tuning script for all types of tasks")
@@ -66,7 +69,7 @@ def get_args_parser():
                             help="path where to save metrics")
 
     # Model and hyperparameters
-    argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
+    argparser.add_argument("--train_model", type=str, default="vit-b-16", required=False,
                             choices=["resnet34", "squeezenet1-1", "efficientnet-v2-m", "vit-t-16", "vit-s-16", "vit-b-16", "vit-l-16"])
 
     argparser.add_argument("--batch_size", type=int, default=256)
@@ -289,7 +292,7 @@ def main(args):
             scaler, args.name_of_run, criterion,
             class_weights, args
         )
-        pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1 = evaluate_model_segmentation(
+        pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1, mean_ap, mean_ap_50, mean_ap_75, pixel_ap_mean = evaluate_model_segmentation(
             model=model, test_dataloader=test_dataloader,
             device=device, output_dir=output_dir,
             config=config, class_weights=class_weights, args=args
@@ -308,12 +311,14 @@ def main(args):
             result_df = pd.DataFrame(columns=[
                 "Downstream Task", "Train Model", "Training type", "Pre-training configuration", "Finetuning type", "balance_data", "data_configuration", "no_of_training_samples",
                 "Pixel IoU", "Pixel Accuracy", "Pixel Precision", "Pixel Recall", "Pixel Dice", "Object Precision", "Object Recall", "Object F1-Score",
+                "Instance mAP", "Instance mAP@0.5", "Instance mAP@0.75", "Pixel-based AP",
                 "batch_size", "num_epochs", "patience", "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay",
                 "warmup_epochs", "max_norm", "accum_iter", "weight_dice", "weight_ce", "weight_boundary", "use_positive_only_conequest", "output_folder"
             ])
         current_result = [
             args.dataset, args.train_model, args.which_finetuning, pretraining_configuration, args.finetuning_type, args.balance_data, args.data_configuration, no_of_samples,
             pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall, object_f1,
+            mean_ap, mean_ap_50, mean_ap_75, pixel_ap_mean,
             args.batch_size, args.num_epochs, args.patience, args.drop_path, args.global_pool, args.learning_rate, args.min_lr,
             args.weight_decay, args.layer_decay, args.warmup_epochs, args.max_norm, args.accum_iter, args.weight_dice, args.weight_ce, args.weight_boundary, args.use_positive_only_conequest,
             current_output_folder

@@ -2,6 +2,7 @@
 import numpy as np
 from scipy import ndimage
 from scipy.optimize import linear_sum_assignment
+from skimage import measure
 
 
 def compute_iou(mask1, mask2):
@@ -173,73 +174,216 @@ def compute_batch_object_metrics(y_true_batch, y_pred_batch, iou_threshold=0.5):
     }
 
 
-
-
-'''
-import rasterio.features
-import shapely.geometry
-
-def get_object_level_metrics(y_true, y_pred, iou_threshold=0.5):
+def compute_map_segmentation(labels_np, pred_np, posterior_np, num_classes, 
+                             iou_thresholds=[0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+                             confidence_thresholds=None):
     """
-    Get object level metrics for a single mask / prediction pair.
-
+    Compute mAP for instance segmentation.
+    
     Args:
-        y_true (np.ndarray): Ground truth mask.
-        y_pred (np.ndarray): Predicted mask.
-        iou_threshold (float, optional): IoU threshold for matching predictions to ground truths. Defaults to 0.5.
-
-    Returns
-        tuple (int, int, int): Number of true positives, false positives, and false negatives.
+        labels_np: Ground truth mask (H, W) with class indices
+        pred_np: Predicted mask (H, W) with class indices
+        posterior_np: Class probabilities (num_classes, H, W)
+        num_classes: Number of classes
+        iou_thresholds: List of IoU thresholds for mAP calculation
+        confidence_thresholds: Optional list of confidence thresholds
+    
+    Returns:
+        Dictionary with mAP metrics
     """
+    
+    if confidence_thresholds is None:
+        confidence_thresholds = np.arange(0.5, 1.0, 0.05)
+    
+    # Extract connected components (instances) from ground truth and predictions
+    gt_instances = []
+    pred_instances = []
+    
+    # Process each class (skip background class 0)
+    for class_idx in range(1, num_classes):
+        # Ground truth instances for this class
+        gt_mask_class = (labels_np == class_idx).astype(np.uint8)
+        gt_labeled = measure.label(gt_mask_class, connectivity=2)
+        
+        for region in measure.regionprops(gt_labeled):
+            gt_instances.append({
+                'class': class_idx,
+                'mask': (gt_labeled == region.label),
+                'area': region.area,
+                'bbox': region.bbox
+            })
+        
+        # Predicted instances for this class
+        pred_mask_class = (pred_np == class_idx).astype(np.uint8)
+        pred_labeled = measure.label(pred_mask_class, connectivity=2)
+        
+        # Get confidence scores for each predicted instance
+        for region in measure.regionprops(pred_labeled):
+            instance_mask = (pred_labeled == region.label)
+            # Average confidence score over the instance pixels
+            confidence = posterior_np[class_idx][instance_mask].mean()
+            
+            pred_instances.append({
+                'class': class_idx,
+                'mask': instance_mask,
+                'area': region.area,
+                'bbox': region.bbox,
+                'confidence': confidence
+            })
+    
+    # Sort predictions by confidence (descending)
+    pred_instances.sort(key=lambda x: x['confidence'], reverse=True)
+    
+    # Calculate AP for each IoU threshold
+    aps = []
+    
+    for iou_threshold in iou_thresholds:
+        # Track which ground truth instances have been matched
+        gt_matched = [False] * len(gt_instances)
+        
+        # Lists to store precision and recall values
+        precisions = []
+        recalls = []
+        
+        tp = 0
+        fp = 0
+        
+        for pred_idx, pred in enumerate(pred_instances):
+            # Find best matching ground truth instance
+            best_iou = 0
+            best_gt_idx = -1
+            
+            for gt_idx, gt in enumerate(gt_instances):
+                # Only match same class
+                if pred['class'] != gt['class']:
+                    continue
+                
+                # Calculate IoU
+                intersection = np.logical_and(pred['mask'], gt['mask']).sum()
+                union = np.logical_or(pred['mask'], gt['mask']).sum()
+                
+                if union > 0:
+                    iou = intersection / union
+                    if iou > best_iou:
+                        best_iou = iou
+                        best_gt_idx = gt_idx
+            
+            # Check if this prediction matches a ground truth
+            if best_iou >= iou_threshold and not gt_matched[best_gt_idx]:
+                tp += 1
+                gt_matched[best_gt_idx] = True
+            else:
+                fp += 1
+            
+            # Calculate precision and recall
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / len(gt_instances) if len(gt_instances) > 0 else 0
+            
+            precisions.append(precision)
+            recalls.append(recall)
+        
+        # Calculate AP using 11-point interpolation or all-point interpolation
+        ap = calculate_ap(recalls, precisions)
+        aps.append(ap)
+    
+    # Calculate mAP as mean of APs across IoU thresholds
+    map_score = np.mean(aps)
+    
+    # Also calculate AP at specific IoU thresholds (like COCO metrics)
+    map_50 = aps[0] if len(aps) > 0 else 0  # AP@0.5
+    map_75 = aps[5] if len(aps) > 5 else 0  # AP@0.75
+    
+    return {
+        'mAP': map_score,
+        'mAP@0.5': map_50,
+        'mAP@0.75': map_75,
+        'AP_per_iou': dict(zip(iou_thresholds, aps))
+    }
 
-    if iou_threshold < 0.5:
-        raise ValueError(
-            "iou_threshold must be greater than 0.5"
-        )  # If we go lower than 0.5 then it is possible for a single prediction to match with multiple ground truths and we have to do de-duplication
-    y_true_shapes = []
-    for geom, val in rasterio.features.shapes(y_true):
-        if val == 1:
-            y_true_shapes.append(shapely.geometry.shape(geom))
 
-    y_pred_shapes = []
-    for geom, val in rasterio.features.shapes(y_pred):
-        if val == 1:
-            y_pred_shapes.append(shapely.geometry.shape(geom))
+def calculate_ap(recalls, precisions):
+    """
+    Calculate Average Precision using 11-point interpolation.
+    """
+    if len(recalls) == 0:
+        return 0.0
+    
+    # Add sentinel values at the beginning and end
+    recalls = [0.0] + recalls + [1.0]
+    precisions = [0.0] + precisions + [0.0]
+    
+    # Make precision monotonically decreasing
+    for i in range(len(precisions) - 2, -1, -1):
+        precisions[i] = max(precisions[i], precisions[i + 1])
+    
+    # Calculate AP using 11-point interpolation
+    ap = 0.0
+    for threshold in np.arange(0, 1.1, 0.1):
+        # Find recalls that are >= threshold
+        valid_indices = [i for i, r in enumerate(recalls) if r >= threshold]
+        if len(valid_indices) > 0:
+            ap += max([precisions[i] for i in valid_indices])
+    
+    ap /= 11.0
+    return ap
 
-    tps = 0
-    fns = 0
-    tp_is = set()  # keep track of which of the true shapes are true positives
-    tp_js = set()  # keep track of which of the predicted shapes are true positives
-    fn_is = set()  # keep track of which of the true shapes are false negatives
-    matched_js = set()
-    for i, y_true_shape in enumerate(y_true_shapes):
-        matching_j = None
-        for j, y_pred_shape in enumerate(y_pred_shapes):
-            if y_true_shape.intersects(y_pred_shape):
-                intersection = y_true_shape.intersection(y_pred_shape)
-                union = y_true_shape.union(y_pred_shape)
-                iou = intersection.area / union.area
-                if iou > iou_threshold:
-                    matching_j = j
-                    matched_js.add(j)
-                    tp_js.add(j)
-                    break
-        if matching_j is not None:
-            tp_is.add(i)
-            tps += 1
-        else:
-            fn_is.add(i)
-            fns += 1
-    fps = len(y_pred_shapes) - len(matched_js)
-    fp_js = (
-        set(range(len(y_pred_shapes))) - matched_js
-    )  # compute which of the predicted shapes are false positives
 
-    # Create masks of the true positives, false positives, and false negatives
-    # tp_i_mask = rasterio.features.rasterize([y_true_shapes[i] for i in tp_is], out_shape= y_true.shape)
-    # tp_j_mask = rasterio.features.rasterize([y_pred_shapes[j] for j in tp_js], out_shape= y_pred.shape)
-    # fp_j_mask = rasterio.features.rasterize([y_pred_shapes[j] for j in fp_js], out_shape= y_pred.shape)
-    # fn_i_mask = rasterio.features.rasterize([y_true_shapes[i] for i in fn_is], out_shape= y_true.shape)
-
-    return (tps, fps, fns)
-'''
+def compute_pixel_based_map(labels_np, posterior_np, num_classes,
+                            iou_thresholds=[0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95],
+                            confidence_thresholds=None):
+    """
+    Compute mAP using pixel-level predictions at different confidence thresholds.
+    This is simpler but less accurate than instance-based mAP.
+    
+    Args:
+        labels_np: Ground truth mask (H, W) with class indices
+        posterior_np: Class probabilities (num_classes, H, W)
+        num_classes: Number of classes
+        iou_thresholds: List of IoU thresholds
+        confidence_thresholds: List of confidence thresholds to evaluate
+    
+    Returns:
+        Dictionary with mAP metrics
+    """
+    if confidence_thresholds is None:
+        confidence_thresholds = np.arange(0.1, 1.0, 0.05)
+    
+    aps_per_class = []
+    
+    # Calculate AP for each class (skip background)
+    for class_idx in range(1, num_classes):
+        precisions = []
+        recalls = []
+        
+        gt_mask = (labels_np == class_idx)
+        gt_positive = gt_mask.sum()
+        
+        if gt_positive == 0:
+            continue
+        
+        # Evaluate at different confidence thresholds
+        for conf_threshold in confidence_thresholds:
+            pred_mask = posterior_np[class_idx] >= conf_threshold
+            
+            tp = np.logical_and(pred_mask, gt_mask).sum()
+            fp = np.logical_and(pred_mask, ~gt_mask).sum()
+            fn = np.logical_and(~pred_mask, gt_mask).sum()
+            
+            precision = tp / (tp + fp) if (tp + fp) > 0 else 0
+            recall = tp / (tp + fn) if (tp + fn) > 0 else 0
+            
+            precisions.append(precision)
+            recalls.append(recall)
+        
+        # Calculate AP for this class
+        ap = calculate_ap(recalls, precisions)
+        aps_per_class.append(ap)
+    
+    # Calculate mAP
+    map_score = np.mean(aps_per_class) if len(aps_per_class) > 0 else 0.0
+    
+    return {
+        'mAP': map_score,
+        'AP_per_class': aps_per_class,
+        'num_classes_evaluated': len(aps_per_class)
+    }

@@ -18,7 +18,7 @@ import segmentation_models_pytorch as smp
 import torch
 
 import utils.lr_sched as lr_sched
-from utils.metrics import compute_object_metrics
+from utils.metrics import compute_object_metrics, compute_map_segmentation, compute_pixel_based_map
 import utils.misc as misc
 
 
@@ -346,6 +346,7 @@ def evaluate_model_segmentation(
 
     pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice = [], [], [], [], []
     object_precision, object_recall, object_f1 = [], [], []
+    map_scores, map_50_scores, map_75_scores, pixel_ap_scores = [], [], [], []
 
     num_classes = config["num_classes"]
 
@@ -380,6 +381,7 @@ def evaluate_model_segmentation(
                 # For object metrics
                 pred_np = prediction.cpu().numpy()[0].squeeze()
                 labels_np = labels.cpu().numpy()[0].squeeze()
+                posterior_np = posterior.cpu().numpy()[0]  # (2, H, W)
 
             else:
                 # Get class predictions (B, H, W)
@@ -422,11 +424,32 @@ def evaluate_model_segmentation(
                 # For object metrics
                 pred_np = prediction.cpu().numpy()[0]
                 labels_np = labels_indices.cpu().numpy()[0]
+                posterior_np = posterior.cpu().numpy()[0]
 
             metrics = compute_object_metrics(labels_np, pred_np, iou_threshold=0.5, num_classes=num_classes)
             object_precision.append(metrics['precision'])
             object_recall.append(metrics['recall'])
             object_f1.append(metrics['f1_score'])
+
+            # Compute instance-based mAP metrics
+            map_metrics = compute_map_segmentation(
+                labels_np, 
+                pred_np, 
+                posterior_np, 
+                num_classes=num_classes,
+                iou_thresholds=[0.5, 0.55, 0.6, 0.65, 0.7, 0.75, 0.8, 0.85, 0.9, 0.95]
+            )
+            map_scores.append(map_metrics['mAP'])
+            map_50_scores.append(map_metrics.get('mAP@0.5', 0))
+            map_75_scores.append(map_metrics.get('mAP@0.75', 0))
+
+            # Compute pixel-based AP metrics
+            pixel_ap_metrics = compute_pixel_based_map(
+                labels_np,
+                posterior_np,
+                num_classes=num_classes
+            )
+            pixel_ap_scores.append(pixel_ap_metrics['mAP'])
 
     pixel_iou = np.nanmean(pixel_iou)
     pixel_accuracy = np.nanmean(pixel_accuracy)
@@ -436,6 +459,10 @@ def evaluate_model_segmentation(
     object_precision = np.nanmean(object_precision)
     object_recall = np.nanmean(object_recall)
     object_f1 = np.nanmean(object_f1)
+    mean_ap = np.nanmean(map_scores)
+    mean_ap_50 = np.nanmean(map_50_scores)
+    mean_ap_75 = np.nanmean(map_75_scores)
+    pixel_ap_mean = np.nanmean(pixel_ap_scores)
 
     print("-" * 60)
     print("Pixel IoU:", pixel_iou)
@@ -446,6 +473,10 @@ def evaluate_model_segmentation(
     print("Object Precision:", object_precision)
     print("Object Recall:", object_recall)
     print("Object F1 Score:", object_f1)
+    print("Instance mAP:", mean_ap)
+    print("Instance mAP@0.5:", mean_ap_50)
+    print("Instance mAP@0.75:", mean_ap_75)
+    print("Pixel-based AP:", pixel_ap_mean)
     print("-" * 60)
 
-    return pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1
+    return pixel_iou, pixel_accuracy, pixel_recall, pixel_precision, pixel_dice, object_precision, object_recall, object_f1, mean_ap, mean_ap_50, mean_ap_75, pixel_ap_mean
