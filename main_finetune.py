@@ -55,9 +55,9 @@ def get_args_parser():
                            choices=["lp", "ft"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
-    argparser.add_argument("--normalize", type=str, default="HiRISE, CTX, THEMIS", required=False,
+    argparser.add_argument("--normalize", type=str, default="HiRISE_CTX_THEMIS", required=False,
                            help="For finetuning, please provide the name of the pretrained model",
-                           choices=["HiRISE", "CTX", "THEMIS", "HiRISE, CTX, THEMIS"])
+                           choices=["HiRISE", "CTX", "THEMIS", "HiRISE_CTX_THEMIS"])
 
     # Paths
     argparser.add_argument("--output_dir", type=str, default=None, required=False,

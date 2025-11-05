@@ -364,7 +364,7 @@ def evaluate_model_segmentation(
 
                 cv2.imwrite(
                     os.path.join(output_dir, "predictions", filename[0]),
-                    prediction.cpu().numpy()[0].astype(np.uint8)
+                    prediction.cpu().numpy()[0].squeeze(0).astype(np.uint8)
                 )
 
                 tp, fp, fn, tn = smp.metrics.get_stats(prediction, labels.type(torch.int64), mode='binary')

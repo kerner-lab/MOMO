@@ -73,6 +73,7 @@ class SegmentationDataset(BaseDataset):
         self.batch_size = args.batch_size
         self.pin_mem = args.pin_mem
         self.use_positive_only_conequest = args.use_positive_only_conequest
+        self.args = args
 
         self.train_df, self.val_df, self.test_df = self._prepare_data()
 
@@ -83,15 +84,14 @@ class SegmentationDataset(BaseDataset):
 
     def _prepare_data(self):
 
+        train_df = self._get_data_df(os.path.join(self.data_dir, "data"), "train")
+        val_df = self._get_data_df(os.path.join(self.data_dir, "data"), "val")
+        test_df = self._get_data_df(os.path.join(self.data_dir, "data"), "test")
+
         if self.partition:
-            data_df = pd.read_csv(os.path.join(self.data_dir, "partitions", f"{self.partition}.csv"))
-            train_df = data_df[data_df["split"]=="train"]
-            val_df = data_df[data_df["split"]=="val"]
-            test_df = data_df[data_df["split"]=="test"]
-        else:
-            train_df = self._get_data_df(os.path.join(self.data_dir, "data"), "train")
-            val_df = self._get_data_df(os.path.join(self.data_dir, "data"), "val")
-            test_df = self._get_data_df(os.path.join(self.data_dir, "data"), "test")
+            ratio = float(self.partition.split("x_")[0])
+            n_samples = int(np.ceil(len(train_df) * ratio))
+            train_df = train_df.sample(n=n_samples, random_state=self.args.seed).reset_index(drop=True)
 
         if ("conequest" in self.data_dir) and self.use_positive_only_conequest:
             metadata_df = pd.read_csv(os.path.join(self.data_dir, "metadata.csv"))

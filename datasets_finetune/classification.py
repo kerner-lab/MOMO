@@ -81,30 +81,36 @@ class ClassificationDataset(BaseDataset):
         self.train_model = args.train_model
         self.batch_size = args.batch_size
         self.pin_mem = args.pin_mem
+        self.args = args
 
         self.train_df, self.val_df, self.test_df = self._prepare_data()
 
     def _prepare_data(self):
 
-        if self.few_shot:
-            data_df = pd.read_csv(os.path.join(self.data_dir, "few_shot", f"{self.few_shot}.csv"))
-        elif self.partition:
-            data_df = pd.read_csv(os.path.join(self.data_dir, "partitions", f"{self.partition}.csv"))
-        else:
-            data_df = pd.read_csv(os.path.join(self.data_dir, "annotation.csv"))
+        data_df = pd.read_csv(os.path.join(self.data_dir, "annotation.csv"))
 
         train_df = data_df[data_df["split"]=="train"]
         val_df = data_df[data_df["split"]=="val"]
         test_df = data_df[data_df["split"]=="test"]
 
+        if self.few_shot:
+            n_shots = int(self.few_shot.split("_")[0])
+            train_df = (train_df.groupby('label', group_keys=False)
+                       .apply(lambda x: x.sample(n=n_shots, random_state=self.args.seed)).reset_index(drop=True))
+        elif self.partition:
+            partition_df = pd.read_csv(os.path.join(self.data_dir, "partitions", f"{self.partition}.csv"))
+            train_df = partition_df[partition_df["split"]=="train"]
+        else:
+            pass
+
         if self.balance == "under_sample":
             min_samples = train_df['label'].value_counts().min()
             train_df = (train_df.groupby('label', group_keys=False)
-                       .apply(lambda x: x.sample(n=min_samples, random_state=42)).reset_index(drop=True))
+                       .apply(lambda x: x.sample(n=min_samples, random_state= self.args.seed)).reset_index(drop=True))
         elif self.balance == "over_sample":
             X = train_df.drop(columns=['label'])
             y = train_df['label']
-            ros = RandomOverSampler(random_state=42)
+            ros = RandomOverSampler(random_state=self.args.seed)
             X_resampled, y_resampled = ros.fit_resample(X, y)
             train_df = pd.concat([X_resampled, pd.Series(y_resampled, name='label')], axis=1)
             train_df['label'] = train_df['label'].astype('int32')
