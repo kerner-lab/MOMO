@@ -88,9 +88,9 @@ def get_args_parser():
     # Wandb parameters
     argparser.add_argument("--wandb_enabled", default=False, required=False, action="store_true",
                         help="True value of this parameter assumes that you have wandb account")
-    argparser.add_argument("--wandb_entity", type=str, default="mpurohi3", required=False,
+    argparser.add_argument("--wandb_entity", type=str, required=False,
                             help="Provide Wandb entity where plots will be available")
-    argparser.add_argument("--wandb_project", type=str, default="LMM", required=False,
+    argparser.add_argument("--wandb_project", type=str, required=False,
                             help="Provide Wandb project name for plots")
 
     # Merging args
