@@ -25,10 +25,6 @@ torch.backends.cudnn.deterministic = True
 torch.backends.cudnn.benchmark = False
 torch.set_warn_always(False)
 
-
-# python main_finetune.py --data_dir /data/hkerner/mpurohi3/MarsBench/NewDatasets --dataset mb-mmls --balance_data loss_reweight --which_finetuning scratch_training --output_dir /scratch/bgajera2/Mirali/ --batch_size 32 --num_epochs 1
-
-
 def get_args_parser():
 
     argparser = argparse.ArgumentParser(description="Fine-tuning script for all types of tasks")
@@ -102,9 +98,9 @@ def get_args_parser():
     # wandb
     argparser.add_argument("--wandb_enabled", default=False, required=False, action="store_true",
                             help="True value of this parameter assumes that you have wandb account")
-    argparser.add_argument("--wandb_entity", type=str, default="mpurohi3", required=False,
+    argparser.add_argument("--wandb_entity", type=str, required=False,
                             help="Provide Wandb entity where plots will be available")
-    argparser.add_argument("--wandb_project", type=str, default="LMM_finetuning", required=False,
+    argparser.add_argument("--wandb_project", type=str, required=False,
                             help="Provide Wandb project name for plots")
 
     return argparser
