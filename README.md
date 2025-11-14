@@ -1,2 +1,2 @@
-# LMM
-Large Mars Model
+# MOMO
+**M**ars **O**rbital **Mo**del
