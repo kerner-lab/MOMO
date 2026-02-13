@@ -6,7 +6,6 @@ import numpy as np
 import torch
 
 
-# From https://gist.github.com/ihoromi4/b681a9088f348942b01711f251e5f964
 def seed_everything(seed: int):
 
     random.seed(seed)
@@ -14,5 +13,13 @@ def seed_everything(seed: int):
     np.random.seed(seed)
     torch.manual_seed(seed)
     torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
+    
     torch.backends.cudnn.deterministic = True
-    torch.backends.cudnn.benchmark = True
+    torch.backends.cudnn.benchmark = False
+    torch.backends.cudnn.enabled = False
+    torch.backends.cuda.matmul.allow_tf32 = False
+    torch.backends.cudnn.allow_tf32 = False
+    torch.use_deterministic_algorithms(True, warn_only=True)
+    os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
+    os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
