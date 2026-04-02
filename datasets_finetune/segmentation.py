@@ -1,5 +1,4 @@
 
-
 import cv2
 import numpy as np
 import os
@@ -78,7 +77,7 @@ class SegmentationDataset(BaseDataset):
         self.train_df, self.val_df, self.test_df = self._prepare_data()
 
     def _get_data_df(self, data_dir, split) -> pd.DataFrame:
-        img_files = os.listdir(os.path.join(data_dir, split, "images"))
+        img_files = sorted(os.listdir(os.path.join(data_dir, split, "images")))
         data_df = pd.DataFrame({"file_id": img_files, "split": split})
         return data_df
 
@@ -106,15 +105,39 @@ class SegmentationDataset(BaseDataset):
     def _create_dataset(self, df: pd.DataFrame, is_training: bool) -> Dataset:
         return CustomDataset(self.data_dir, df, self.train_transform if is_training else self.val_transform)
 
+    def _worker_init_fn(self, worker_id):
+        """Seed each DataLoader worker for reproducible augmentations (albumentations uses numpy/random)."""
+        import random
+        worker_seed = torch.initial_seed() % (2**32)
+        np.random.seed(worker_seed)
+        random.seed(worker_seed)
+
+    def get_train_dataloader_for_weights(self) -> DataLoader:
+        """Returns a dataloader with SequentialSampler for compute_class_weights.
+        Does NOT consume the training generator - use this instead of train_dataloader for weights."""
+        train_dataset = self._create_dataset(self.train_df, is_training=True)
+        sampler = torch.utils.data.SequentialSampler(train_dataset)
+        return DataLoader(
+            train_dataset, sampler=sampler,
+            batch_size=self.batch_size,
+            num_workers=8,
+            pin_memory=self.pin_mem
+        )
+
     def get_train_dataloader(self) -> DataLoader:
         train_dataset = self._create_dataset(self.train_df, is_training=True)
-        sampler_train = torch.utils.data.RandomSampler(train_dataset)
+        g = torch.Generator()
+        g.manual_seed(self.args.seed)
+        sampler_train = torch.utils.data.RandomSampler(train_dataset, generator=g)
+        # persistent_workers=False for reproducibility (Albumentations docs: avoid True for exact reproducibility)
         train_dataloader = DataLoader(
             train_dataset, sampler=sampler_train,
             batch_size=self.batch_size,
             num_workers=8,
-            persistent_workers=True,
-            pin_memory=self.pin_mem
+            persistent_workers=False,
+            pin_memory=self.pin_mem,
+            generator=g,
+            worker_init_fn=self._worker_init_fn
         )
         return train_dataloader, self.train_df.shape[0]
 

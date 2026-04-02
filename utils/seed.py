@@ -1,6 +1,7 @@
 
 import os
 import random
+import warnings
 
 import numpy as np
 import torch
@@ -23,3 +24,9 @@ def seed_everything(seed: int):
     torch.use_deterministic_algorithms(True, warn_only=True)
     os.environ["CUBLAS_WORKSPACE_CONFIG"] = ":4096:8"
     os.environ["CUDA_LAUNCH_BLOCKING"] = "1"
+
+    # Suppress warnings
+    warnings.filterwarnings("ignore")
+    torch.backends.cudnn.deterministic = True
+    torch.backends.cudnn.benchmark = False
+    torch.set_warn_always(False)

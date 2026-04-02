@@ -5,25 +5,19 @@ import json
 import os
 import random
 import wandb
-import warnings
 
 import torch
 from torch import nn
 
 from datasets_finetune.dataset_factory import DatasetFactory
 from engine_finetune import *
-from models_finetune import create_finetune_model, create_finetune_model_vit
+from models_finetune import *
 
 from utils.losses import WeightedCombinedLoss, compute_class_weights, CombinedLoss
 import utils.lr_decay as lrd
 from utils.seed import seed_everything
 from utils.transforms import create_transforms
 
-# Suppress warnings
-warnings.filterwarnings("ignore")
-torch.backends.cudnn.deterministic = True
-torch.backends.cudnn.benchmark = False
-torch.set_warn_always(False)
 
 def get_args_parser():
 
@@ -54,9 +48,6 @@ def get_args_parser():
                            choices=["lp", "ft"])
     argparser.add_argument("--encoder_checkpoint", type=str, default=None, required=False,
                            help="For finetuning, please provide path of the weights for encoder")
-    argparser.add_argument("--normalize", type=str, default="HiRISE_CTX_THEMIS", required=False,
-                           help="For finetuning, please provide the name of the pretrained model",
-                           choices=["HiRISE", "CTX", "THEMIS", "HiRISE_CTX_THEMIS"])
 
     # Paths
     argparser.add_argument("--output_dir", type=str, default=None, required=False,
@@ -66,16 +57,16 @@ def get_args_parser():
 
     # Model and hyperparameters
     argparser.add_argument("--train_model", type=str, default="vit-b-16", required=False,
-                            choices=["resnet34", "squeezenet1-1", "efficientnet-v2-m", "vit-t-16", "vit-s-16", "vit-b-16", "vit-l-16"])
+                            choices=["vit-t-16", "vit-s-16", "vit-b-16", "vit-l-16"])
 
-    argparser.add_argument("--batch_size", type=int, default=256)
+    argparser.add_argument("--batch_size", type=int, default=32)
     argparser.add_argument("--num_epochs", type=int, default=100)
     argparser.add_argument("--patience", type=int, default=5, required=False,
                             help="Number of epochs to wait for improvement before early stopping")
 
     argparser.add_argument("--drop_path", type=float, default=0.0, required=False)
     argparser.add_argument("--global_pool", default=True, required=False, action="store_true")
-    argparser.add_argument("--learning_rate", type=float, default=1e-3)
+    argparser.add_argument("--learning_rate", type=float, default=1e-4)
     argparser.add_argument('--min_lr', type=float, default=1e-6, metavar='LR', help='lower lr bound for cyclic schedulers that hit 0')
     argparser.add_argument('--accum_iter', default=1, type=int, help='Accumulate gradient iterations')
     argparser.add_argument('--weight_decay', type=float, default=0.05, help='weight decay (default: 0.05)')
@@ -112,14 +103,18 @@ def main(args):
     ### Check device type
     device = "cuda" if torch.cuda.is_available() else "cpu"
 
+    ### Check if pretrained checkpoint is provided for ImageNet pretrained or customized pre-trained checkpoint finetuning
+    if args.which_finetuning in ["imagenet_pretrained", "checkpoint"]:
+        if args.encoder_checkpoint is None:
+            raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
+
     ### Initializing output directory and unique name of current run
     if args.which_finetuning in ["imagenet_pretrained", "scratch_training"]:
-        if (args.which_finetuning == "imagenet_pretrained") and ("vit" in args.train_model) and (args.encoder_checkpoint is None):
-            raise ValueError("Path of ImageNet pretrained checkpoint must be provided for finetuning ViT models.")
+        if (args.which_finetuning == "imagenet_pretrained") and ("mae" in args.encoder_checkpoint):
+            args.which_finetuning = "mae_" + args.which_finetuning
         pretraining_configuration = "-"
         args.name_of_run = f"{args.which_finetuning}_{args.balance_data}"
     elif args.which_finetuning == "checkpoint":
-        assert args.encoder_checkpoint is not None, "Path of pretrained encoder checkpoint must be provided for finetuning."
         path_parts = args.encoder_checkpoint.split("/")
         checkpoint_name, type_of_model = path_parts[-1], path_parts[-2]
         if "model_merging" in type_of_model:
@@ -138,9 +133,9 @@ def main(args):
     config = all_configs[args.dataset]
     config["balance"] = args.balance_data if args.balance_data is not None else "default"
 
-    ### Create transforms, datasets and dataloaders
-    train_transform = create_transforms(args.dataset, args.which_finetuning, args.normalize, is_training=True)
-    val_transform = create_transforms(args.dataset, args.which_finetuning, args.normalize, is_training=False)
+    ### Create transforms, datasets and dataloaders (seed for Albumentations - it has its own RNG)
+    train_transform = create_transforms(args.dataset, args.which_finetuning, is_training=True, seed=args.seed)
+    val_transform = create_transforms(args.dataset, args.which_finetuning, is_training=False)
 
     dataset = DatasetFactory.create_dataset(config, train_transform, val_transform, args)
     train_dataloader, no_of_samples = dataset.get_train_dataloader()
@@ -148,10 +143,7 @@ def main(args):
     test_dataloader = dataset.get_test_dataloader()
 
     ### Create model
-    if "vit" in args.train_model:
-        model = create_finetune_model_vit(args.train_model, args.which_finetuning, args.drop_path, args.global_pool, config, args.encoder_checkpoint, args.finetuning_type, device, args)
-    else:
-        model = create_finetune_model(args.train_model, args.which_finetuning, config, args.encoder_checkpoint, device)
+    model = create_finetune_model_vit(args.train_model, args.which_finetuning, args.drop_path, args.global_pool, config, args.encoder_checkpoint, args.finetuning_type, device, args)
     model = model.to(device)
 
     ### Create output and metrics directories
@@ -189,7 +181,8 @@ def main(args):
         else:
             criterion = nn.CrossEntropyLoss()
     if "segmentation" in config["task_type"]:
-        class_weights = compute_class_weights(train_dataloader, config["num_classes"])
+        # Use separate dataloader for weights - must NOT consume the training generator to avoid reproducibility issues
+        class_weights = compute_class_weights(dataset.get_train_dataloader_for_weights(), config["num_classes"])
         if args.balance_data == "loss_reweight":
             criterion = WeightedCombinedLoss(
                 num_classes=config["num_classes"],
@@ -311,6 +304,7 @@ def main(args):
                 "batch_size", "num_epochs", "patience", "drop_path", "global_pool", "lr", "min_lr", "weight_decay", "layer_decay",
                 "warmup_epochs", "max_norm", "accum_iter", "weight_dice", "weight_ce", "weight_boundary", "use_positive_only_conequest", "output_folder"
             ])
+
         current_result = [
             args.dataset, args.train_model, args.which_finetuning, pretraining_configuration, args.finetuning_type, args.balance_data, args.data_configuration, no_of_samples,
             pixel_iou, pixel_accuracy, pixel_precision, pixel_recall, pixel_dice, object_precision, object_recall, object_f1,
@@ -327,11 +321,14 @@ if __name__ == "__main__":
 
     args = get_args_parser()
     args = args.parse_args()
+
     if args.random_seed_per_run:
         args.seed = random.randint(0, 2**32 - 1)
+        seed_everything(args.seed)
+        main(args)
+        torch.cuda.empty_cache()
     else:
         args.seed = 42
-    seed_everything(args.seed)
-
-    main(args)
-    torch.cuda.empty_cache()
+        seed_everything(args.seed)
+        main(args)
+        torch.cuda.empty_cache()

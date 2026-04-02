@@ -1,32 +1,18 @@
 
 import argparse
 import os
-import random
-import time
-import wandb
-import timm
-import sys
-
 import torch
-import torch.nn as nn
-import torch.optim as optim
-import torchvision.transforms as transforms
-import torchvision.datasets as datasets
+import wandb
 
 from data_processing import prepare_dataloaders
 from engine_merging import create_combined_encoder
-from engine_pretrain import model_training, model_training_vit
+from engine_pretrain import model_training_vit
 from models_pretrain import create_model
 
 import utils.lr_sched as lr_sched
 import utils.misc as misc
 from utils.misc import NativeScalerWithGradNormCount as NativeScaler
 from utils.seed import seed_everything
-
-
-### Ignore warnings
-import warnings
-warnings.filterwarnings("ignore")
 
 
 def parse_dict(arg_string):
@@ -57,8 +43,8 @@ def get_args_parser():
     argparser.add_argument("--output_dir", type=str, default="models", required=False)
 
     # Model parameters
-    argparser.add_argument("--train_model", type=str, default="resnet34", required=False,
-                            help="Available choices: resnet34, squeezenet1-1, efficientnet-v2-m, vit-t-16, vit-s-16, vit-b-16, vit-l-16")
+    argparser.add_argument("--train_model", type=str, default="vit-b-16", required=False,
+                            help="Available choices: vit-t-16, vit-s-16, vit-b-16, vit-l-16")
     argparser.add_argument("--if_pretrained", default=False, required=False, action="store_true")
     argparser.add_argument("--backbone_weight", type=str, default="imagenet", required=False)
     argparser.add_argument("--vit_pretrained_checkpoint_path", type=str, default="", required=False)
@@ -141,29 +127,22 @@ def main(args):
         ### Initialize model, loss, optimizer and wandb
         model = create_model(
             train_model=args.train_model,
-            model_unit="autoencoder",
             device=device,
-            if_pretrained=args.if_pretrained,
             args=args
         )
 
         ### Initialize optimizer and loss scaler
-        if "vit" in args.train_model:
-            eff_batch_size = args.batch_size * args.accum_iter
+        eff_batch_size = args.batch_size * args.accum_iter
 
-            if args.learning_rate is None:
-                args.learning_rate = args.blr * eff_batch_size / 256
+        if args.learning_rate is None:
+            args.learning_rate = args.blr * eff_batch_size / 256
 
-            param_groups = lr_sched.add_weight_decay(model, args.weight_decay)
-            optimizer = torch.optim.AdamW(param_groups, lr=args.learning_rate, betas=(0.9, 0.95))
-            loss_scaler = NativeScaler()
+        param_groups = lr_sched.add_weight_decay(model, args.weight_decay)
+        optimizer = torch.optim.AdamW(param_groups, lr=args.learning_rate, betas=(0.9, 0.95))
+        loss_scaler = NativeScaler()
 
-            misc.load_model(args=args, model=model, optimizer=optimizer, loss_scaler=loss_scaler)
-            criterion = loss_scaler
-
-        else:
-            criterion = nn.MSELoss()
-            optimizer = optim.Adam(model.parameters(), lr=args.learning_rate)
+        misc.load_model(args=args, model=model, optimizer=optimizer, loss_scaler=loss_scaler)
+        criterion = loss_scaler
 
         ### Initialize wandb
         if args.wandb_enabled:
@@ -184,20 +163,13 @@ def main(args):
             )
 
         ### Training model
-        if "vit" in args.train_model:
-            model_training_vit(
-                model,
-                train_dataloader, val_dataloader,
-                args.num_epochs, device, output_dir,
-                loss_scaler, optimizer, wandb, args
-            )
-        else:
-            model_training(
-                model,
-                train_dataloader, val_dataloader,
-                args.num_epochs, device, output_dir,
-                criterion, optimizer, wandb, args
-            )
+        model_training_vit(
+            model,
+            train_dataloader, val_dataloader,
+            args.num_epochs, device, output_dir,
+            loss_scaler, optimizer, wandb, args
+        )
+
 
     ### Model Merging
     if args.if_merging:
