@@ -24,7 +24,7 @@
 
 ## Introduction
 
-We introduce **MOMO**, the first multi-sensor foundation model for Mars remote sensing. MOMO uses model merging to integrate representations learned independently from three key Martian orbital sensors — **HiRISE**, **CTX**, and **THEMIS** — spanning resolutions from 0.25 m/pixel to 100 m/pixel.
+We introduce **MOMO**, the first multi-sensor foundation model for Mars remote sensing. MOMO uses model merging to integrate representations learned independently from three key Martian orbital sensors: **HiRISE**, **CTX**, and **THEMIS**; spanning resolutions from 0.25 m/pixel to 100 m/pixel.
 
 Central to our method is a novel **Equal Validation Loss (EVL)** strategy, which aligns checkpoints across sensors based on validation loss similarity before fusion via task arithmetic. This ensures models are merged at compatible convergence stages, leading to improved stability and generalization.
 
