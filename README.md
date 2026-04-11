@@ -4,8 +4,8 @@
 
 <p align="center">
   <a href="https://arxiv.org/abs/2604.02719">📄 Paper</a> |
-  <a href="#">🤗 HuggingFace (coming soon)</a> |
-  <a href="#">📦 Model Checkpoints (coming soon)</a>
+  <a href="https://huggingface.co/Mirali33/MOMO">🤗 HuggingFace</a> |
+  <a href="https://huggingface.co/Mirali33/MOMO">📦 Model Checkpoints</a>
 </p>
 
 <p align="center">
@@ -28,7 +28,7 @@ We introduce **MOMO**, the first multi-sensor foundation model for Mars remote s
 
 Central to our method is a novel **Equal Validation Loss (EVL)** strategy, which aligns checkpoints across sensors based on validation loss similarity before fusion via task arithmetic. This ensures models are merged at compatible convergence stages, leading to improved stability and generalization.
 
-MOMO is trained on ~12 million Mars orbital samples and evaluated on 9 downstream tasks from [Mars-Bench](https://arxiv.org/abs/2510.24010). It outperforms ImageNet pre-trained, Earth observation foundation model, sensor-specific pre-training, and fully-supervised baselines — with particularly consistent gains on segmentation tasks.
+MOMO is trained on approximately 12 million Mars orbital samples and evaluated on 9 downstream tasks from [Mars-Bench](https://arxiv.org/abs/2510.24010). It outperforms ImageNet pre-trained, Earth observation foundation model, sensor-specific pre-training, and fully-supervised baselines, with particularly consistent gains on segmentation tasks.
 
 <p align="center">
   <img src="assets/momo-teaser.png" alt="MOMO can be applied across a wide range of resolutions and Martian remote sensing tasks." width="90%"><br>
@@ -48,6 +48,29 @@ pip install -e ".[dev]"
 ```
 
 > Requires Python 3.10+ and CUDA 12.x for GPU support.
+
+---
+
+## Model Checkpoints
+
+Pre-trained model weights are available on [HuggingFace](https://huggingface.co/Mirali33/MOMO) for three ViT architectures (ViT-Small, ViT-Base, ViT-Large).
+
+```python
+import torch
+from huggingface_hub import hf_hub_download
+
+# Download MOMO ViT-Base checkpoint
+path = hf_hub_download(repo_id="Mirali33/MOMO", filename="vit-b-16/momo.pth")
+checkpoint = torch.load(path, map_location="cpu", weights_only=False)
+```
+
+| File | Description |
+|------|-------------|
+| `ctx.pth` | Pre-trained on CTX (ConTeXt Camera) |
+| `hirise.pth` | Pre-trained on HiRISE (High Resolution Imaging Science Experiment) |
+| `themis.pth` | Pre-trained on THEMIS (THermal EMission Imaging System) |
+| `hirise_ctx_themis.pth` | Pre-trained jointly on all three sensors |
+| `momo.pth` | MOMO merged model via task arithmetic + EVL (main contribution) |
 
 ---
 
