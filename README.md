@@ -51,7 +51,7 @@ pip install -e ".[dev]"
 
 ---
 
-## Model Checkpoints
+## Usage
 
 Pre-trained model weights are available on [HuggingFace](https://huggingface.co/Mirali33/MOMO) for three ViT architectures (ViT-Small, ViT-Base, ViT-Large).
 
@@ -64,6 +64,10 @@ path = hf_hub_download(repo_id="Mirali33/MOMO", filename="vit-b-16/momo.pth")
 checkpoint = torch.load(path, map_location="cpu", weights_only=False)
 ```
 
+Replace `vit-b-16` with `vit-s-16` or `vit-l-16` for other architectures, and `momo.pth` with `ctx.pth`, `hirise.pth`, `themis.pth`, or `hirise_ctx_themis.pth` for sensor-specific checkpoints.
+
+### Model Checkpoints
+
 | File | Description |
 |------|-------------|
 | `ctx.pth` | Pre-trained on CTX (ConTeXt Camera) |
@@ -71,12 +75,6 @@ checkpoint = torch.load(path, map_location="cpu", weights_only=False)
 | `themis.pth` | Pre-trained on THEMIS (THermal EMission Imaging System) |
 | `hirise_ctx_themis.pth` | Pre-trained jointly on all three sensors |
 | `momo.pth` | MOMO merged model via task arithmetic + EVL (main contribution) |
-
----
-
-## Usage
-
-> Coming soon. Example commands for pre-training, model merging, and fine-tuning will be added here.
 
 ---
 
