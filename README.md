@@ -6,7 +6,8 @@
   <a href="https://arxiv.org/abs/2604.02719">📄 Paper</a> |
   <a href="https://huggingface.co/Mirali33/MOMO">🤗 HuggingFace</a> |
   <a href="https://huggingface.co/Mirali33/MOMO">📦 Model Checkpoints</a>
-  <a href="[https://huggingface.co/Mirali33/MOMO](https://huggingface.co/datasets/Mirali33/MOMO-pretraining-data)">🛢️ Model Checkpoints</a>
+  <a href="https://huggingface.co/datasets/Mirali33/MOMO-pretraining-data">🛢️ Pre-training Data</a>
+  <a href="https://mars-bench.github.io/">🏆  Mars-Bench (Downstream tasks)</a>
 </p>
 
 <p align="center">
