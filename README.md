@@ -6,6 +6,7 @@
   <a href="https://arxiv.org/abs/2604.02719">📄 Paper</a> |
   <a href="https://huggingface.co/Mirali33/MOMO">🤗 HuggingFace</a> |
   <a href="https://huggingface.co/Mirali33/MOMO">📦 Model Checkpoints</a>
+  <a href="[https://huggingface.co/Mirali33/MOMO](https://huggingface.co/datasets/Mirali33/MOMO-pretraining-data)">🛢️ Model Checkpoints</a>
 </p>
 
 <p align="center">
@@ -83,12 +84,13 @@ Replace `vit-b-16` with `vit-s-16` or `vit-l-16` for other architectures, and `m
 If you use MOMO in your research, please use the following citation:
 
 ```bibtex
-@inproceedings{purohit2026momo,
-    title={MOMO: Mars Orbital Model Foundation Model for Mars Orbital Applications},
-    author={Mirali Purohit and Bimal Gajera and Irish Mehta and Bhanu Tokas and Jacob Adler and Steven Lu and Scott Dickenshied and Serina Diniega and Brian Bue and Umaa Rebbapragada and Hannah Kerner},
-    booktitle={Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition},
-    year={2026},
-    url={https://arxiv.org/abs/2604.02719}
+@InProceedings{Purohit_2026_CVPR,
+    author    = {Purohit, Mirali and Gajera, Bimal and Mehta, Irish and Tokas, Bhanu and Adler, Jacob and Lu, Steven and Dickenshied, Scott and Diniega, Serina and Bue, Brian and Rebbapragada, Umaa and Kerner, Hannah},
+    title     = {MOMO: Mars Orbital MOdel Foundation Model for Mars Orbital Applications},
+    booktitle = {Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (CVPR)},
+    month     = {June},
+    year      = {2026},
+    pages     = {27772-27782}
 }
 ```
 
