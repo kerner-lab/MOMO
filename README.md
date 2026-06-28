@@ -4,8 +4,7 @@
 
 <p align="center">
   <a href="https://openaccess.thecvf.com/content/CVPR2026/html/Purohit_MOMO_Mars_Orbital_MOdel_Foundation_Model_for_Mars_Orbital_Applications_CVPR_2026_paper.html">📄 Paper</a> |
-  <a href="https://huggingface.co/Mirali33/MOMO">🤗 HuggingFace</a> |
-  <a href="https://huggingface.co/Mirali33/MOMO">📦 Model Checkpoints</a> |
+  <a href="https://huggingface.co/Mirali33/MOMO">🤗 HuggingFace (Model checkpoints)</a> |
   <a href="https://huggingface.co/datasets/Mirali33/MOMO-pretraining-data">🛢️ Pre-training Data</a> |
   <a href="https://mars-bench.github.io/">🏆  Mars-Bench (Downstream tasks)</a>
 </p>
